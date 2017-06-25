@@ -5,8 +5,6 @@ var Map = (function(win,doc,undefined){
         center = [0,0],
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d');
-
-    //var sizeScale = d3.scale.
     
     //basic loop stuff
     var dt = 0,
@@ -139,27 +137,47 @@ var Map = (function(win,doc,undefined){
         if(!this.visible) return;
         //orbit trace
         //TODO: change prominence of orbits based on scale
-        c.save();
-        c.rotate(this.yaw);
-        c.translate(-this.linearEccentricity*scale,0)
-        c.strokeStyle = '#fff';
-        c.lineWidth = 0.5;
-        c.beginPath();
-        c.ellipse(0,0,this.majorAxis*scale,this.minorAxis*scale,0,
-            0,2*pi,false);
-        c.stroke();
-        c.restore();
+        if(scale > (10/this.majorAxis)){
+            c.save();
+            c.rotate(this.yaw);
+            c.translate(-this.linearEccentricity*scale,0)
+            c.strokeStyle = '#fff';
+            c.lineWidth = 0.5;
+            c.beginPath();
+            c.ellipse(0,0,this.majorAxis*scale,this.minorAxis*scale,0,
+                0,2*pi,false);
+            c.stroke();
+            c.restore();
+        }
         //drawing the body itself, don't do it unless we're kinda close
         //TODO: draw point initially, then a circle depending on size
         //TODO: always draw the sun
+
+        if(this.type == 0){
+            c.save();
+            c.fillStyle = this.drawColor;
+            c.beginPath();
+            c.moveTo(2,2);
+            c.lineTo(0,12);
+            c.lineTo(-2,2);
+            c.lineTo(12,0);
+            c.lineTo(-2,-2);
+            c.lineTo(0,-12);
+            c.lineTo(2,-2);
+            c.lineTo(-12,0);
+            c.closePath();
+            c.fill();
+            c.restore();
+        }
+
         if(this.id && scale < (50/this.majorAxis)) return;
         //TODO: draw just offscreen stuff too, will depend on size
-        if(this.id == 0 || this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height){
+        if(this.type == 1 && this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height){
             c.save();
             c.translate(this.x*scale,this.y*scale);
-            c.fillStyle = '#ff0';
+            c.fillStyle = this.drawColor;
             c.beginPath();
-            c.arc(0,0,this.radius*scale,0,2*pi,false);
+            c.arc(0,0,5,0,2*pi,false);
             c.fill();
             c.restore();
         }
