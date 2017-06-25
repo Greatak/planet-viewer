@@ -5,6 +5,8 @@ var Map = (function(win,doc,undefined){
         center = [0,0],
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d');
+
+    //var sizeScale = d3.scale.
     
     //basic loop stuff
     var dt = 0,
@@ -85,11 +87,13 @@ var Map = (function(win,doc,undefined){
 
         //drawing variables
         this.r = 0;
-        this.x = 0;
+        this.x = 0;                     //these are in meters with sun at origin
         this.y = 0;
-        this.yawS = 0;
-        this.yawC = 0;
+        this.viewX = 0;                 //these are in pixels relative to viewport
+        this.viewY = 0;
         this.drawPeriod = 0;
+        this.visible = true;
+        this.extraTime = 0;             //save skipped frames so we don't lose orbit sync
 
         for(var i in obj) this[i] = obj[i];
 
@@ -101,34 +105,38 @@ var Map = (function(win,doc,undefined){
         //local star is relative to the sun though
         this.mass *= this.id?5.97237e24:1.98855e30;
 
-        //calculates parameters, will be replaced with a different function in the future
-        //this one is called every frame and doesn't need to do all this
-        this.update(0);
+        this.change();
 
         bodies.push(this);
     }
-    function updateBody(dt){
-        //TODO: move this stuff to its own function
+    function changeBody(){
+        //TODO: only recalc what actually changed, low priority
         this.minorAxis = Math.sqrt(1-(this.eccentricity*this.eccentricity))*this.majorAxis;
         this.latus = (this.minorAxis*this.minorAxis)/this.majorAxis;
         this.linearEccentricity = Math.sqrt((this.majorAxis*this.majorAxis)-(this.minorAxis*this.minorAxis));
-        this.trueAnomaly = meanToTrue(this.eccentricity,this.meanAnomaly);
         this.grav = this.mass * 6.67408e-11;
         if(this.id){    //sun doesn't orbit
             this.period = Math.sqrt((4*pi*pi*this.majorAxis*this.majorAxis*this.majorAxis)/(6.67e-11*(bodies[0].mass+this.mass)));
             this.drawPeriod = 1/(this.period/1e7);
         }
-        this.yawS = Math.sin(this.yaw);
-        this.yawC = Math.cos(this.yaw);
-
-        //this stuff actually needs to change every frame
-        this.meanAnomaly += this.drawPeriod*dt;
-        var r = this.getR(this.trueAnomaly);
-        this.x = (r * Math.cos(this.trueAnomaly+this.yaw));
-        this.y = r * Math.sin(this.trueAnomaly+this.yaw);
+    }
+    Body.prototype.change = changeBody;
+    function updateBody(dt){
+        this.extraTime += dt;
+        if(this.visible){
+            this.meanAnomaly += this.drawPeriod*this.extraTime;
+            this.trueAnomaly = meanToTrue(this.eccentricity,this.meanAnomaly);
+            var r = this.getR(this.trueAnomaly);
+            this.x = (r * Math.cos(this.trueAnomaly+this.yaw));
+            this.y = r * Math.sin(this.trueAnomaly+this.yaw);
+            this.viewX = (this.x * scale) + center[0];
+            this.viewY = (this.y * scale) + center[1];
+            this.extraTime = 0;
+        }
     }
     Body.prototype.update = updateBody;
     function drawBody(c,scale){
+        if(!this.visible) return;
         //orbit trace
         //TODO: change prominence of orbits based on scale
         c.save();
@@ -142,17 +150,19 @@ var Map = (function(win,doc,undefined){
         c.stroke();
         c.restore();
         //drawing the body itself, don't do it unless we're kinda close
-        //TODO: only draw things in the current view
         //TODO: draw point initially, then a circle depending on size
         //TODO: always draw the sun
-        if(scale < (50/this.majorAxis)) return;
-        c.save();
-        c.translate(this.x*scale,this.y*scale);
-        c.strokeStyle = '#ff0';
-        c.beginPath();
-        c.arc(0,0,5,0,2*pi,false);
-        c.stroke();
-        c.restore();
+        if(this.id && scale < (50/this.majorAxis)) return;
+        //TODO: draw just offscreen stuff too, will depend on size
+        if(this.id == 0 || this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height){
+            c.save();
+            c.translate(this.x*scale,this.y*scale);
+            c.fillStyle = '#ff0';
+            c.beginPath();
+            c.arc(0,0,this.radius*scale,0,2*pi,false);
+            c.fill();
+            c.restore();
+        }
     }
     Body.prototype.draw = drawBody;
     function bodyGetR(angle){
@@ -161,7 +171,9 @@ var Map = (function(win,doc,undefined){
     }
     Body.prototype.getR = bodyGetR;
 
-    return bodies;
+    var o = {};
+    o.bodies = bodies;
+    return o;
 
 })(window,document);
 
