@@ -5,7 +5,8 @@ var Map = (function(win,doc,undefined){
         center = [0,0],
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d');
-
+    
+    //basic loop stuff
     var dt = 0,
         oldTime = 0;
     function loop(time){
@@ -13,25 +14,21 @@ var Map = (function(win,doc,undefined){
         dt = (time-oldTime)/1000;
         oldTime = time;
 
-        //scale = 0;
         bodies.forEach(function(d){
-            d.update(dt); 
-            //if(scale < d.linearEccentricity) scale = d.linearEccentricity; 
+            d.update(dt);
         });
-        //scale = (height/2-40)/(1.5*scale);
-
+        //separated for future optimizations
         draw(ctx);
         bodies.forEach(function(d){d.draw(ctx,scale);});
         ctx.restore();
     }
     function draw(c){
+        //it's a little derpy with the save/restore points not in the same function but eh
         c.clearRect(0,0,width,height);
         c.save();
-        //c.translate(width/2,height/2);
+        //translate is from the zoom behavior and is in pixel coords
+        //bodies are in actual meters so scaling is done on their end, not globally
         c.translate(center[0],center[1]);
-        //when we scale the whole canvas, it makes the lines much thinner to the point of being invisible
-        //so we should probably handle this in Body.draw so the lines are consistent
-        //c.scale(scale,scale);
     }
     function init(){
         width = win.innerWidth;
@@ -57,6 +54,7 @@ var Map = (function(win,doc,undefined){
     }
     win.addEventListener('load',init);
 
+    //d3 handles the zooming without much fuss and will later be useful to show surface features of planets
     var zoom = d3.behavior.zoom()
         .on('zoom',handleZoom);
     function handleZoom(){
@@ -64,6 +62,7 @@ var Map = (function(win,doc,undefined){
         center = d3.event.translate;
     }
 
+    //keep track of all of 'em for looping
     var bodies = [];
     function Body(obj){
         this.id = bodies.length;
@@ -73,14 +72,14 @@ var Map = (function(win,doc,undefined){
         this.latus = 0;                 //calculated
         this.eccentricity = 0;
         this.linearEccentricity = 0;    //calculated
-        this.meanAnomaly = 0;
-        this.yaw = 0;
-        this.inclination = 0;
-        this.center = {};                //should be an object
-        this.trueAnomaly = 0;
+        this.meanAnomaly = 0;           //this is 
+        this.yaw = 0;                   //really longitude of perihelion
+        this.inclination = 0;           //maybe future use, but just make orbit backwards if negative
+        this.center = {};               //should be an object
+        this.trueAnomaly = 0;           //calculated
         this.period = 0;
 
-        //optional parameters
+        //other parameters
         this.mass = 0;
         this.grav = 0;                  //calculated
 
@@ -94,47 +93,59 @@ var Map = (function(win,doc,undefined){
 
         for(var i in obj) this[i] = obj[i];
 
+        //input values are relative to Earth and in degrees because wikipedia uses degrees
         this.majorAxis *= AU;
         this.meanAnomaly *= pi/180;
         this.inclination *= pi/180;
         this.yaw *= pi/180;
+        //local star is relative to the sun though
         this.mass *= this.id?5.97237e24:1.98855e30;
 
+        //calculates parameters, will be replaced with a different function in the future
+        //this one is called every frame and doesn't need to do all this
         this.update(0);
 
         bodies.push(this);
     }
     function updateBody(dt){
+        //TODO: move this stuff to its own function
         this.minorAxis = Math.sqrt(1-(this.eccentricity*this.eccentricity))*this.majorAxis;
         this.latus = (this.minorAxis*this.minorAxis)/this.majorAxis;
         this.linearEccentricity = Math.sqrt((this.majorAxis*this.majorAxis)-(this.minorAxis*this.minorAxis));
         this.trueAnomaly = meanToTrue(this.eccentricity,this.meanAnomaly);
         this.grav = this.mass * 6.67408e-11;
-        if(this.id){
+        if(this.id){    //sun doesn't orbit
             this.period = Math.sqrt((4*pi*pi*this.majorAxis*this.majorAxis*this.majorAxis)/(6.67e-11*(bodies[0].mass+this.mass)));
             this.drawPeriod = 1/(this.period/1e7);
         }
-
-        this.meanAnomaly += this.drawPeriod*dt;
         this.yawS = Math.sin(this.yaw);
         this.yawC = Math.cos(this.yaw);
+
+        //this stuff actually needs to change every frame
+        this.meanAnomaly += this.drawPeriod*dt;
         var r = this.getR(this.trueAnomaly);
         this.x = (r * Math.cos(this.trueAnomaly+this.yaw));
         this.y = r * Math.sin(this.trueAnomaly+this.yaw);
     }
     Body.prototype.update = updateBody;
     function drawBody(c,scale){
+        //orbit trace
+        //TODO: change prominence of orbits based on scale
         c.save();
         c.rotate(this.yaw);
         c.translate(-this.linearEccentricity*scale,0)
         c.strokeStyle = '#fff';
-        c.lineWidth = 1;
+        c.lineWidth = 0.5;
         c.beginPath();
         c.ellipse(0,0,this.majorAxis*scale,this.minorAxis*scale,0,
             0,2*pi,false);
         c.stroke();
         c.restore();
-        if(scale < (100/this.majorAxis)) return;
+        //drawing the body itself, don't do it unless we're kinda close
+        //TODO: only draw things in the current view
+        //TODO: draw point initially, then a circle depending on size
+        //TODO: always draw the sun
+        if(scale < (50/this.majorAxis)) return;
         c.save();
         c.translate(this.x*scale,this.y*scale);
         c.strokeStyle = '#ff0';
@@ -154,6 +165,7 @@ var Map = (function(win,doc,undefined){
 
 })(window,document);
 
+//who needs jquery
 function $(what){
     if(what.startsWith('<') && what.endsWith('>')){
         what = what.substring(1,what.length-1);
@@ -171,6 +183,7 @@ function $(what){
         return document.querySelectorAll(what);
     }
 }
+//astronomers suck, but there is no better way
 function meanToTrue(ecc, anom){
         var a = anom%(2*pi);
         if(a < pi){
