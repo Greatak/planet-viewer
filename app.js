@@ -3,7 +3,7 @@ var Map = (function(win,doc,undefined){
         height = 0,
         scale = 0,
         center = [0,0],
-        viewLock = 3,
+        viewLock = -1,
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d'),
         fps = 0;
@@ -56,6 +56,11 @@ var Map = (function(win,doc,undefined){
             scale = (height-40)/(scale);
             zoom.scale(scale);
         });
+        d3.json('moons.json',function(data){
+            data.forEach(function(d){
+                new Body(d);
+            });
+        });
         d3.select("#main-container").call(zoom);
         requestAnimationFrame(loop);
     }
@@ -65,6 +70,7 @@ var Map = (function(win,doc,undefined){
     var zoom = d3.behavior.zoom()
         .on('zoom',handleZoom);
     function handleZoom(){
+        //TODO: pan and zoom limits
         scale = d3.event.scale;
         center = d3.event.translate;
     }
@@ -81,7 +87,7 @@ var Map = (function(win,doc,undefined){
         this.eccentricity = 0;
         this.linearEccentricity = 0;    //calculated
         this.meanAnomaly = 0;           //this is 
-        this.yaw = 0;                   //really longitude of perihelion
+        this.yaw = 0;                   //really longitude of ascending node
         this.inclination = 0;           //maybe future use, but just make orbit backwards if negative
         this.center = {};               //should be an object
         this.trueAnomaly = 0;           //calculated
@@ -126,22 +132,16 @@ var Map = (function(win,doc,undefined){
         this.grav = this.mass * 6.67408e-11;
         if(this.id){    //sun doesn't orbit
             this.period = Math.sqrt((4*pi*pi*this.majorAxis*this.majorAxis*this.majorAxis)/(6.67e-11*(bodies[0].mass+this.mass)));
-            this.drawPeriod = 1/(this.period/1e7);
         }
+        this.trueAnomaly = meanToTrue(this.eccentricity,this.meanAnomaly);
+        this.r = this.getR(this.trueAnomaly)||0;
+        this.x = (this.r * Math.cos(this.trueAnomaly+this.yaw));
+        this.y = this.r * Math.sin(this.trueAnomaly+this.yaw);
     }
     Body.prototype.change = changeBody;
     function updateBody(dt){
-        this.extraTime += dt;
-        if(this.visible){
-            this.meanAnomaly += this.drawPeriod*this.extraTime;
-            this.trueAnomaly = meanToTrue(this.eccentricity,this.meanAnomaly);
-            this.r = this.getR(this.trueAnomaly)||0;
-            this.x = (this.r * Math.cos(this.trueAnomaly+this.yaw));
-            this.y = this.r * Math.sin(this.trueAnomaly+this.yaw);
-            this.viewX = ((this.x+this.center.x) * scale) + center[0];
-            this.viewY = ((this.y+this.center.y) * scale) + center[1];
-            this.extraTime = 0;
-        }
+        this.viewX = ((this.x+this.center.x) * scale) + center[0];
+        this.viewY = ((this.y+this.center.y) * scale) + center[1];
     }
     Body.prototype.update = updateBody;
     function drawBody(c,scale){
@@ -155,7 +155,7 @@ var Map = (function(win,doc,undefined){
             c.rotate(this.yaw);
             c.translate(-this.linearEccentricity*scale,0)
             c.strokeStyle = '#fff';
-            c.lineWidth = 0.5;
+            c.lineWidth = 0.25;
             c.beginPath();
             c.ellipse(0,0,this.majorAxis*scale,this.minorAxis*scale,0,
                 0,2*pi,false);
@@ -185,10 +185,10 @@ var Map = (function(win,doc,undefined){
 
         if(this.id && scale > (50/this.majorAxis)){
             //TODO: draw just offscreen stuff too, will depend on size
-            if(this.type == 1 && this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height){
+            if(this.type > 0 && this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height){
                 c.save();
                 c.translate(this.x*scale,this.y*scale);
-                c.fillStyle = this.drawColor;
+                c.fillStyle = this.drawColor||'#ddd';
                 c.beginPath();
                 c.arc(0,0,5,0,2*pi,false);
                 c.fill();
@@ -206,6 +206,7 @@ var Map = (function(win,doc,undefined){
 
     var o = {};
     o.bodies = bodies;
+    o.scale = function(){return scale;}
     return o;
 
 })(window,document);
