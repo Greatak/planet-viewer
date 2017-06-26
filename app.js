@@ -142,10 +142,11 @@ var Map = (function(win,doc,undefined){
     function updateBody(dt){
         this.viewX = ((this.x+this.center.x) * scale) + center[0];
         this.viewY = ((this.y+this.center.y) * scale) + center[1];
+
+        this.visible = this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height;
     }
     Body.prototype.update = updateBody;
     function drawBody(c,scale){
-        if(!this.visible) return;
         c.save();
         if(this.center) c.translate(this.center.x*scale,this.center.y*scale);
         //orbit trace
@@ -185,7 +186,7 @@ var Map = (function(win,doc,undefined){
 
         if(this.id && scale > (50/this.majorAxis)){
             //TODO: draw just offscreen stuff too, will depend on size
-            if(this.type > 0 && this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height){
+            if(this.type > 0 && this.visible){
                 c.save();
                 c.translate(this.x*scale,this.y*scale);
                 c.fillStyle = this.drawColor||'#ddd';
