@@ -4,6 +4,7 @@ var Map = (function(win,doc,undefined){
         scale = 0,
         center = [0,0],
         viewLock = -1,
+        mousePos = [0,0],
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d'),
         fps = 0;
@@ -16,11 +17,8 @@ var Map = (function(win,doc,undefined){
         dt = (time-oldTime)/1000;
         oldTime = time;
         fps = 1/dt;
-        if(fps < 50) console.log(fps);
 
-        bodies.forEach(function(d){
-            d.update(dt);
-        });
+        bodies.forEach(function(d){d.update(dt);});
         if(viewLock >= 0){
             center[0] = -bodies[viewLock].x*scale + width/2;
             center[1] = -bodies[viewLock].y*scale + height/2;
@@ -62,6 +60,7 @@ var Map = (function(win,doc,undefined){
             });
         });
         d3.select("#main-container").call(zoom);
+        d3.select(canvas).on('mousemove',handleMouseMove);
         requestAnimationFrame(loop);
     }
     win.addEventListener('load',init);
@@ -73,6 +72,10 @@ var Map = (function(win,doc,undefined){
         //TODO: pan and zoom limits
         scale = d3.event.scale;
         center = d3.event.translate;
+    }
+    function handleMouseMove(){
+        console.log(d3.mouse(this));
+        mousePos = d3.mouse(this);
     }
 
     //keep track of all of 'em for looping
@@ -106,6 +109,7 @@ var Map = (function(win,doc,undefined){
         this.drawPeriod = 0;
         this.visible = true;
         this.extraTime = 0;             //save skipped frames so we don't lose orbit sync
+        this.highlight = false;
 
         for(var i in obj) this[i] = obj[i];
 
@@ -144,6 +148,10 @@ var Map = (function(win,doc,undefined){
         this.viewY = ((this.y+this.center.y) * scale) + center[1];
 
         this.visible = this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height;
+        
+        //mouseover testing
+        var tx = this.viewX - mousePos[0], ty = this.viewY - mousePos[1];
+        this.highlight = tx > -10 && tx < 10 && ty > -10 && ty < 10
     }
     Body.prototype.update = updateBody;
     function drawBody(c,scale){
@@ -165,7 +173,6 @@ var Map = (function(win,doc,undefined){
         }
         //drawing the body itself, don't do it unless we're kinda close
         //TODO: draw point initially, then a circle depending on size
-        //TODO: always draw the sun
 
         if(this.type == 0){
             c.save();
@@ -189,6 +196,15 @@ var Map = (function(win,doc,undefined){
             if(this.type > 0 && this.visible){
                 c.save();
                 c.translate(this.x*scale,this.y*scale);
+                if(this.highlight){
+                    c.fillStyle = "#fff";
+                    c.beginPath();
+                    c.arc(0,0,10,0,2*pi,false);
+                    c.fill();
+                    c.fillStyle = "#fff";
+                    c.font = '16px sans-serif';
+                    c.fillText(this.name,20,-5);
+                }
                 c.fillStyle = this.drawColor||'#ddd';
                 c.beginPath();
                 c.arc(0,0,5,0,2*pi,false);
