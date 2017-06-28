@@ -11,7 +11,7 @@ var Map = (function(win,doc,undefined){
         visiblePrimaries = [],
         activePrimary = '',
         viewMode = 1,
-        viewTransition = 0,
+        viewTransition = [0,0],
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d'),
         fps = 0;
@@ -76,6 +76,12 @@ var Map = (function(win,doc,undefined){
         oldTime = time;
         fps = 1/dt;
 
+        if(viewMode == 2){
+            if(scale < viewTransition[1]){
+                changeMode(1);
+            }
+        }
+
         if(viewLock >= 0){
             targetCenter[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
             targetCenter[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + height/2;
@@ -111,7 +117,22 @@ var Map = (function(win,doc,undefined){
         //translate is from the zoom behavior and is in pixel coords
         //bodies are in actual meters so scaling is done on their end, not globally
         //otherwise you get pixel coordinates also scaled down and nothing is visible
-        c.translate(center[0],center[1]);
+        if(viewMode == 1)c.translate(center[0],center[1]);
+        if(viewMode == 2){
+            mercator.scale(scale);
+            mercator.translate(center);
+            c.strokeStyle = '#fff';
+            c.lineWidth = 0.5;
+            c.beginPath();
+            path(graticule());
+            c.stroke();
+            if(activePrimary == 'Earth'){
+                c.lineWidth = 1;
+                c.beginPath();
+                path(planetTest);
+                c.stroke();
+            }
+        }
     }
     function init(){
         width = win.innerWidth;
@@ -178,6 +199,23 @@ var Map = (function(win,doc,undefined){
     function changeMode(mode){
         if(viewMode == mode) return;
         viewMode = mode;
+        if(viewMode == 1){
+            viewLock = bodiesByName[activePrimary].id;
+            zoom.scale(viewTransition[0]);
+            mercator.translate([0,0]);
+            center[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
+            center[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + width/2;
+            path.projection(projection);
+        }
+        if(viewMode == 2){
+            viewTransition[0] = scale*0.9;
+            viewTransition[1] = (width-1)/2/pi;
+            zoom.scale(viewTransition[1]);
+            zoom.translate([width/2,height/2]);
+            path.projection(mercator);
+            viewLock = -1;
+        }
+        d3.select("#main-container").call(zoom.event);
     }
     //keep track of all of 'em for looping
     var bodies = [];
@@ -307,6 +345,7 @@ var Map = (function(win,doc,undefined){
     }
     Body.prototype.update = updateBody;
     function drawBody(c,scale){
+        if(viewMode != 1) return;
         c.save();
         //keep everything relative to it's orbital primary
         c.translate(this.center.x*scale,this.center.y*scale);
@@ -354,7 +393,7 @@ var Map = (function(win,doc,undefined){
                     if(this.targetSize > 15){
                         viewLock = this.id;
                         projection.alpha(planetWarp(this.drawSize));
-                        if(projection.alpha() == 1){ changeMode(2); }
+                        if(projection.alpha() == 1){ changeMode(2); console.log('aloha'); }
                         else{ changeMode(1);}
                         ortho.scale(this.drawSize);
                         mercator.scale(this.drawSize/4);
