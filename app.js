@@ -2,6 +2,7 @@ var Map = (function(win,doc,undefined){
     var width = 0,
         height = 0,
         scale = 0,
+        initialScale = 0,
         center = [0,0],
         viewLock = -1,
         mousePos = [0,0],
@@ -66,7 +67,8 @@ var Map = (function(win,doc,undefined){
                 var b = new Body(d);
                 if(scale < b.linearEccentricity) scale = b.linearEccentricity;
             });
-            scale = (height-40)/(scale);
+            scale = (height-40)/(0.5*scale);
+            initialScale = scale;
             zoom.scale(scale);
         });
         d3.json('moons.json',function(data){
@@ -194,7 +196,7 @@ var Map = (function(win,doc,undefined){
         //orbit transition effect
         t = this.targetAngle - this.drawAngle;
         if(t > 0.001){
-            this.drawAngle += 1e8/this.period*dt;
+            this.drawAngle += Math.ceil(0.3,this.period/1e8)*dt;
         }else{
             this.drawAngle = this.targetAngle;
         }
@@ -283,7 +285,7 @@ var Map = (function(win,doc,undefined){
     var o = {};
     o.bodies = bodies;
     o.bodiesByName = bodiesByName;
-    o.scale = function(){return scale;}
+    o.scale = function(){return scale/initialScale;}
     o.primaries = function(){return activePrimary;}
     return o;
 
