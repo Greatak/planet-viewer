@@ -15,12 +15,16 @@ var Map = (function(win,doc,undefined){
         fps = 0;
 
     //planet drawing setup on D3's end
-    var projection = d3.geo.orthographic()
-        .scale(50)
+    var ortho = d3.geo.orthographic()
+        .scale(100)
+        //.rotate([0,-90])
         .translate([width / 2, height / 2])
-        .rotate([0,-90])
         .clipAngle(90)
         .precision(1);
+    var mercator = d3.geo.mercator()
+        .scale(25)
+        .translate([width / 2, height / 2]);
+    var projection = interpolatedProjection(ortho,mercator);
     var path = d3.geo.path()
         .projection(projection)
         .context(ctx);
@@ -28,10 +32,37 @@ var Map = (function(win,doc,undefined){
     var planetContainer = doc.createElement('planet');
     var planetD = d3.select(planetContainer);
     planetD.datum(graticule);
+    var planetTest;
     //planet drawing number tracking
     var planetRotation = d3.scale.linear()
             .range([-90,0])
             .clamp(true);
+    var planetWarp = d3.scale.linear()
+            .range([0,1])
+            .clamp(true);
+    function interpolatedProjection(a, b) {
+        var projection = d3.geo.projection(raw).scale(1),
+            center = projection.center,
+            translate = projection.translate,
+            α;
+
+        function raw(λ, φ) {
+            var pa = a([λ *= 180 / Math.PI, φ *= 180 / Math.PI]), pb = b([λ, φ]);
+            return [(1 - α) * pa[0] + α * pb[0], (α - 1) * pa[1] - α * pb[1]];
+        }
+
+        projection.alpha = function(_) {
+            if (!arguments.length) return α;
+            α = +_;
+            var ca = a.center(), cb = b.center(),
+                ta = a.translate(), tb = b.translate();
+            center([(1 - α) * ca[0] + α * cb[0], (1 - α) * ca[1] + α * cb[1]]);
+            translate([(1 - α) * ta[0] + α * tb[0], (1 - α) * ta[1] + α * tb[1]]);
+            projection.clipAngle(90+(90*α));
+            return projection;
+        };
+        return projection.alpha(0);
+    }
     
     //basic loop stuff
     var dt = 0,
@@ -63,8 +94,8 @@ var Map = (function(win,doc,undefined){
             activePrimary = visibleObjects[0];
         }
         if(viewLock >= 0){
-            center[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
-            center[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + height/2;
+            targetCenter[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
+            targetCenter[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + height/2;
         }
         //separated for future optimizations
         draw(ctx);
@@ -89,7 +120,8 @@ var Map = (function(win,doc,undefined){
         zoom.translate([width/2,height/2]);
         targetCenter = zoom.translate();
         center = targetCenter;
-        planetRotation.domain([30,height/4]);
+        planetRotation.domain([30,height/2]);
+        planetWarp.domain([height/2,height]);
 
         //load Sol
         d3.json('sol.json',function(data){
@@ -109,6 +141,10 @@ var Map = (function(win,doc,undefined){
             });
             initMoon = true;
             finalize();
+        });
+        d3.json("earth-contour.json", function(error, world) {
+            if (error) throw error;
+            planetTest = topojson.mesh(world);
         });
         d3.select("#main-container").call(zoom);
         d3.select(canvas).on('mousemove',handleMouseMove);
@@ -189,6 +225,7 @@ var Map = (function(win,doc,undefined){
         this.yaw *= pi/180;
         //local star is relative to the sun though
         this.mass *= this.id?5.97237e24:1.98855e30;
+        this.majorAxis /= 1e6;
 
         this.change();
 
@@ -307,12 +344,24 @@ var Map = (function(win,doc,undefined){
                 if(this.isPrimary){
                     this.targetSize = Math.max(this.minSize*scale,15);
                     if(this.targetSize > 15){
+                        viewLock = this.id;
+                        projection.alpha(planetWarp(this.drawSize)); 
+                        ortho.scale(this.drawSize);
+                        mercator.scale(this.drawSize/4);
+                        //ortho.rotate([0,planetRotation(this.drawSize)]);
+                        c.strokeStyle = '#fff';
+                        c.lineWidth = 0.5;
                         c.beginPath();
-                        projection.scale(this.drawSize);
-                        projection.rotate([0,planetRotation(this.drawSize)]);
                         path(graticule());
                         c.stroke();
+                        if(this.name == 'Earth'){
+                            c.lineWidth = 1;
+                            c.beginPath();
+                            path(planetTest);
+                            c.stroke();
+                        }
                     }else{
+                        viewLock = -1;
                         c.beginPath();
                         c.arc(0,0,this.drawSize,0,2*pi,false);
                         c.fill();
@@ -350,6 +399,7 @@ var Map = (function(win,doc,undefined){
     o.bodiesByName = bodiesByName;
     o.scale = function(){return scale;}
     o.primaries = function(){return activePrimary;}
+    o.warp = function(){return planetW;}
     return o;
 
 })(window,document);
