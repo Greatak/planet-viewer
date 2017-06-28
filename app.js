@@ -4,6 +4,7 @@ var Map = (function(win,doc,undefined){
         scale = 0,
         initialScale = 0,
         center = [0,0],
+        targetCenter = [0,0],
         viewLock = -1,
         mousePos = [0,0],
         visibleObjects = [],
@@ -12,15 +13,42 @@ var Map = (function(win,doc,undefined){
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d'),
         fps = 0;
+
+    //planet drawing setup on D3's end
+    var projection = d3.geo.orthographic()
+        .scale(50)
+        .translate([width / 2, height / 2])
+        .rotate([0,-90])
+        .clipAngle(90)
+        .precision(1);
+    var path = d3.geo.path()
+        .projection(projection)
+        .context(ctx);
+    var graticule = d3.geo.graticule();
+    var planetContainer = doc.createElement('planet');
+    var planetD = d3.select(planetContainer);
+    planetD.datum(graticule);
+    //planet drawing number tracking
+    var planetRotation = d3.scale.linear()
+            .range([-90,0])
+            .clamp(true);
     
     //basic loop stuff
     var dt = 0,
-        oldTime = 0;
+        oldTime = 0,
+        offset = 0;
     function loop(time){
         requestAnimationFrame(loop);
         dt = (time-oldTime)/1000;
         oldTime = time;
         fps = 1/dt;
+
+        offset = targetCenter[0] - center[0];
+        if(offset < -0.5){ center[0] += 10*offset*dt; }
+        else if(offset > 0.5) { center[0] += 10*offset*dt; }
+        offset = targetCenter[1] - center[1];
+        if(offset < -0.5){ center[1] += 10*offset*dt; }
+        else if(offset > 0.5) { center[1] += 10*offset*dt; }
 
         visiblePrimaries.length = 0;
         visibleObjects.length = 0;
@@ -35,8 +63,8 @@ var Map = (function(win,doc,undefined){
             activePrimary = visibleObjects[0];
         }
         if(viewLock >= 0){
-            center[0] = -bodies[viewLock].x*scale + width/2;
-            center[1] = -bodies[viewLock].y*scale + height/2;
+            center[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
+            center[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + height/2;
         }
         //separated for future optimizations
         draw(ctx);
@@ -59,7 +87,9 @@ var Map = (function(win,doc,undefined){
         canvas.height = height;
         $('#main-container')[0].appendChild(canvas);
         zoom.translate([width/2,height/2]);
-        center = zoom.translate();
+        targetCenter = zoom.translate();
+        center = targetCenter;
+        planetRotation.domain([30,height/4]);
 
         //load Sol
         d3.json('sol.json',function(data){
@@ -70,17 +100,27 @@ var Map = (function(win,doc,undefined){
             scale = (height-40)/(0.5*scale);
             initialScale = scale;
             zoom.scale(scale);
+            initSol = true;
+            finalize();
         });
         d3.json('moons.json',function(data){
             data.forEach(function(d){
                 new Body(d);
             });
+            initMoon = true;
+            finalize();
         });
         d3.select("#main-container").call(zoom);
         d3.select(canvas).on('mousemove',handleMouseMove);
-        requestAnimationFrame(loop);
     }
     win.addEventListener('load',init);
+    //TODO: clean up this finalize function and make it programmatic
+    var initSol = false,initMoon = false;
+    function finalize(){
+        if(!initSol || !initMoon) return;
+        bodies.forEach(function(d){ d.change(); });
+        requestAnimationFrame(loop);
+    }
 
     //d3 handles the zooming without much fuss and will later be useful to show surface features of planets
     var zoom = d3.behavior.zoom()
@@ -89,6 +129,7 @@ var Map = (function(win,doc,undefined){
         //TODO: pan and zoom limits
         scale = d3.event.scale;
         center = d3.event.translate;
+        targetCenter = center;
     }
     function handleMouseMove(){
         mousePos = d3.mouse(this);
@@ -110,6 +151,7 @@ var Map = (function(win,doc,undefined){
         this.inclination = 0;           //maybe future use, but just make orbit backwards if negative
         this.center = {};               //should be an object
         this.isOrbited = false;
+        this.satellites = [];
         this.trueAnomaly = 0;           //calculated
         this.eccAnomaly = 0;            //calculated
         this.period = 0;                //calculated
@@ -126,6 +168,7 @@ var Map = (function(win,doc,undefined){
         this.viewY = 0;
         this.targetSize = 0;
         this.drawSize = 5;
+        this.minSize = 0;
         this.targetAngle = 2*pi;
         this.drawAngle = 0;
         this.visible = true;
@@ -138,7 +181,6 @@ var Map = (function(win,doc,undefined){
         for(var i in obj) this[i] = obj[i];
 
         this.center = bodiesByName[this.primary]||{x:0,y:0};
-        if(this.primary) bodiesByName[this.primary].isOrbited = true;
 
         //input values are relative to Earth and in degrees because wikipedia uses degrees
         if(this.primary == "Sol") this.majorAxis *= AU;
@@ -149,6 +191,11 @@ var Map = (function(win,doc,undefined){
         this.mass *= this.id?5.97237e24:1.98855e30;
 
         this.change();
+
+        if(this.primary){ 
+            bodiesByName[this.primary].isOrbited = true;
+            bodiesByName[this.primary].satellites.push(this);
+        }
 
         bodiesByName[this.name] = this;
         bodies.push(this);
@@ -167,6 +214,13 @@ var Map = (function(win,doc,undefined){
         this.r = this.getR(this.trueAnomaly)||0;
         this.x = (this.r * Math.cos(this.trueAnomaly+this.yaw));
         this.y = this.r * Math.sin(this.trueAnomaly+this.yaw);
+
+        if(this.satellites.length){
+            this.satellites = this.satellites.sort(function(a,b){ return a.majorAxis - b.majorAxis; });
+            var t = this.satellites[0].majorAxis/4;
+            this.minSize = t;
+            this.satellites.forEach(function(d){ d.minSize = t/2; });
+        }
     }
     Body.prototype.change = changeBody;
     function updateBody(dt){
@@ -251,9 +305,18 @@ var Map = (function(win,doc,undefined){
                 c.fillStyle = '#0aa';
                 c.beginPath();
                 if(this.isPrimary){
-                    this.targetSize = 15;
-                    c.arc(0,0,this.drawSize,0,2*pi,false);
-                    c.fill();
+                    this.targetSize = Math.max(this.minSize*scale,15);
+                    if(this.targetSize > 15){
+                        c.beginPath();
+                        projection.scale(this.drawSize);
+                        projection.rotate([0,planetRotation(this.drawSize)]);
+                        path(graticule());
+                        c.stroke();
+                    }else{
+                        c.beginPath();
+                        c.arc(0,0,this.drawSize,0,2*pi,false);
+                        c.fill();
+                    }
                     c.strokeStyle = "#0dd";
                     if(this.isOrbited){
                         c.setLineDash([5,2]);
@@ -285,7 +348,7 @@ var Map = (function(win,doc,undefined){
     var o = {};
     o.bodies = bodies;
     o.bodiesByName = bodiesByName;
-    o.scale = function(){return scale/initialScale;}
+    o.scale = function(){return scale;}
     o.primaries = function(){return activePrimary;}
     return o;
 
