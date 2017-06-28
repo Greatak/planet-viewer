@@ -76,6 +76,10 @@ var Map = (function(win,doc,undefined){
         oldTime = time;
         fps = 1/dt;
 
+        if(viewLock >= 0){
+            targetCenter[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
+            targetCenter[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + height/2;
+        }
         offset = targetCenter[0] - center[0];
         if(offset < -0.5){ center[0] += 10*offset*dt; }
         else if(offset > 0.5) { center[0] += 10*offset*dt; }
@@ -94,10 +98,6 @@ var Map = (function(win,doc,undefined){
         if(visibleObjects.length == 1){
             bodiesByName[visibleObjects[0]].isPrimary = true;
             activePrimary = visibleObjects[0];
-        }
-        if(viewLock >= 0){
-            targetCenter[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
-            targetCenter[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + height/2;
         }
         //separated for future optimizations
         draw(ctx);
@@ -174,7 +174,11 @@ var Map = (function(win,doc,undefined){
     function handleMouseMove(){
         mousePos = d3.mouse(this);
     }
-
+    
+    function changeMode(mode){
+        if(viewMode == mode) return;
+        viewMode = mode;
+    }
     //keep track of all of 'em for looping
     var bodies = [];
     var bodiesByName = {};
@@ -350,8 +354,8 @@ var Map = (function(win,doc,undefined){
                     if(this.targetSize > 15){
                         viewLock = this.id;
                         projection.alpha(planetWarp(this.drawSize));
-                        if(projection.alpha() == 1){ viewMode = 2; }
-                        else{ viewMode = 1;}
+                        if(projection.alpha() == 1){ changeMode(2); }
+                        else{ changeMode(1);}
                         ortho.scale(this.drawSize);
                         mercator.scale(this.drawSize/4);
                         ortho.rotate([0,planetRotation(this.drawSize)]);
