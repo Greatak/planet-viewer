@@ -75,6 +75,7 @@ var Map = (function(win,doc,undefined){
         dt = (time-oldTime)/1000;
         oldTime = time;
         fps = 1/dt;
+        lastModeChange += dt;
 
         if(viewMode == 2){
             if(scale < viewTransition[1]){
@@ -83,15 +84,15 @@ var Map = (function(win,doc,undefined){
         }
 
         if(viewLock >= 0){
-            targetCenter[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
-            targetCenter[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + height/2;
+            center[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
+            center[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + height/2;
         }
-        offset = targetCenter[0] - center[0];
-        if(offset < -0.5){ center[0] += 10*offset*dt; }
-        else if(offset > 0.5) { center[0] += 10*offset*dt; }
-        offset = targetCenter[1] - center[1];
-        if(offset < -0.5){ center[1] += 10*offset*dt; }
-        else if(offset > 0.5) { center[1] += 10*offset*dt; }
+        // offset = targetCenter[0] - center[0];
+        // if(offset < -0.5){ center[0] += 10*offset*dt; }
+        // else if(offset > 0.5) { center[0] += 10*offset*dt; }
+        // offset = targetCenter[1] - center[1];
+        // if(offset < -0.5){ center[1] += 10*offset*dt; }
+        // else if(offset > 0.5) { center[1] += 10*offset*dt; }
 
         visiblePrimaries.length = 0;
         visibleObjects.length = 0;
@@ -117,7 +118,7 @@ var Map = (function(win,doc,undefined){
         //translate is from the zoom behavior and is in pixel coords
         //bodies are in actual meters so scaling is done on their end, not globally
         //otherwise you get pixel coordinates also scaled down and nothing is visible
-        if(viewMode == 1)c.translate(center[0],center[1]);
+        if(viewMode == 1) c.translate(center[0],center[1]);
         if(viewMode == 2){
             mercator.scale(scale);
             mercator.translate(center);
@@ -196,19 +197,23 @@ var Map = (function(win,doc,undefined){
         mousePos = d3.mouse(this);
     }
     
+    var lastModeChange = 0;
     function changeMode(mode){
-        if(viewMode == mode) return;
+        if(viewMode == mode || lastModeChange < 1) return;
+        lastModeChange = 0;
         viewMode = mode;
         if(viewMode == 1){
             viewLock = bodiesByName[activePrimary].id;
             zoom.scale(viewTransition[0]);
+            scale = zoom.scale();
             mercator.translate([0,0]);
             center[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
             center[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + width/2;
+            zoom.translate(center);
             path.projection(projection);
         }
         if(viewMode == 2){
-            viewTransition[0] = scale*0.9;
+            viewTransition[0] = scale;
             viewTransition[1] = (width-1)/2/pi;
             zoom.scale(viewTransition[1]);
             zoom.translate([width/2,height/2]);
@@ -393,8 +398,7 @@ var Map = (function(win,doc,undefined){
                     if(this.targetSize > 15){
                         viewLock = this.id;
                         projection.alpha(planetWarp(this.drawSize));
-                        if(projection.alpha() == 1){ changeMode(2); console.log('aloha'); }
-                        else{ changeMode(1);}
+                        if(projection.alpha() == 1){ changeMode(2); }
                         ortho.scale(this.drawSize);
                         mercator.scale(this.drawSize/4);
                         ortho.rotate([0,planetRotation(this.drawSize)]);
@@ -451,6 +455,8 @@ var Map = (function(win,doc,undefined){
     o.scale = function(){return scale;}
     o.primaries = function(){return activePrimary;}
     o.warp = function(){return planetW;}
+    o.lock = function(){return viewLock;}
+    o.center = function(){return targetCenter;}
     return o;
 
 })(window,document);
