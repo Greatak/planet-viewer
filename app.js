@@ -4,7 +4,6 @@ var Map = (function(win,doc,undefined){
         scale = 0,
         initialScale = 0,
         center = [0,0],
-        targetCenter = [0,0],
         viewLock = -1,
         mousePos = [0,0],
         visibleObjects = [],
@@ -14,6 +13,7 @@ var Map = (function(win,doc,undefined){
         viewTransition = [0,0],
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d'),
+        needsMove = true,
         fps = 0;
 
     //planet drawing setup on D3's end
@@ -65,11 +65,17 @@ var Map = (function(win,doc,undefined){
         };
         return projection.alpha(0);
     }
+    //label layout setup
+    var forceLabels = d3.layout.force()
+            .gravity(0)
+            .linkStrength(0.5);
     
     //basic loop stuff
     var dt = 0,
         oldTime = 0,
-        offset = 0;
+        offset = 0,
+        labelNodes = [],
+        labelLinks = [];
     function loop(time){
         requestAnimationFrame(loop);
         dt = (time-oldTime)/1000;
@@ -87,16 +93,21 @@ var Map = (function(win,doc,undefined){
             center[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
             center[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + height/2;
         }
-        // offset = targetCenter[0] - center[0];
-        // if(offset < -0.5){ center[0] += 10*offset*dt; }
-        // else if(offset > 0.5) { center[0] += 10*offset*dt; }
-        // offset = targetCenter[1] - center[1];
-        // if(offset < -0.5){ center[1] += 10*offset*dt; }
-        // else if(offset > 0.5) { center[1] += 10*offset*dt; }
+        bodies.forEach(function(d){d.update(dt);});
+        if(needsMove){
+            needsMove = false;
+            updateMove(dt);
+        }
 
+        //separated for future optimizations
+        draw(ctx);
+        bodies.forEach(function(d){d.draw(ctx,scale);});
+        ctx.restore();
+    }
+    function updateMove(dt){
         visiblePrimaries.length = 0;
         visibleObjects.length = 0;
-        bodies.forEach(function(d){d.update(dt);});
+        bodies.forEach(function(d){d.move(dt);});
         if(visiblePrimaries.length == 1) activePrimary = visiblePrimaries[0];
         if(visiblePrimaries.length == 2){
             bodiesByName[visiblePrimaries[1]].isPrimary = true;
@@ -106,10 +117,14 @@ var Map = (function(win,doc,undefined){
             bodiesByName[visibleObjects[0]].isPrimary = true;
             activePrimary = visibleObjects[0];
         }
-        //separated for future optimizations
-        draw(ctx);
-        bodies.forEach(function(d){d.draw(ctx,scale);});
-        ctx.restore();
+        labelNodes.length = 0;
+        labelLinks.length = 0;
+        visibleObjects.forEach(function(d,i){
+            labelNodes.push({name:d});
+            labelNodes.push({x:bodiesByName[d].viewX,y:bodiesByName[d].viewY,fixed:true});
+            labelLinks.push({source:i*2+1,target:i*2});
+        });
+        forceLabels.nodes(labelNodes).links(labelLinks).start();
     }
     function draw(c){
         //it's a little derpy with the save/restore points not in the same function but eh
@@ -118,7 +133,31 @@ var Map = (function(win,doc,undefined){
         //translate is from the zoom behavior and is in pixel coords
         //bodies are in actual meters so scaling is done on their end, not globally
         //otherwise you get pixel coordinates also scaled down and nothing is visible
-        if(viewMode == 1) c.translate(center[0],center[1]);
+        if(viewMode == 1){
+            if(visibleObjects.length < 15){
+                c.strokeStyle = '#0ff';
+                c.fillStyle = '#fff';
+                c.font = '16px sans-serif';
+                c.textBaseline = 'bottom';
+                labelLinks.forEach(function(d){
+                    var l = c.measureText(d.target.name);
+                    c.beginPath();
+                    c.moveTo(d.source.x,d.source.y);
+                    c.lineTo(d.target.x,d.target.y);
+                    if(d.target.x > width/2){
+                        c.lineTo(d.target.x+l.width,d.target.y);
+                        c.stroke();
+                        c.fillText(d.target.name,d.target.x,d.target.y);
+                    }else{
+                        c.lineTo(d.target.x-l.width,d.target.y);
+                        c.stroke();
+                        c.fillText(d.target.name,d.target.x-l.width,d.target.y);
+                    }
+                });
+            }
+
+            c.translate(center[0],center[1]);
+        }
         if(viewMode == 2){
             mercator.scale(scale);
             mercator.translate(center);
@@ -142,10 +181,10 @@ var Map = (function(win,doc,undefined){
         canvas.height = height;
         $('#main-container')[0].appendChild(canvas);
         zoom.translate([width/2,height/2]);
-        targetCenter = zoom.translate();
-        center = targetCenter;
+        center = zoom.translate();
         planetRotation.domain([30,height/2]);
         planetWarp.domain([height/2,height]);
+        forceLabels.size([width,height]);
 
         //load Sol
         d3.json('sol.json',function(data){
@@ -190,8 +229,8 @@ var Map = (function(win,doc,undefined){
         scale = d3.event.scale;
         if(viewLock < 0){
             center = d3.event.translate;
-            targetCenter = center;
         }
+        needsMove = true;
     }
     function handleMouseMove(){
         mousePos = d3.mouse(this);
@@ -199,29 +238,30 @@ var Map = (function(win,doc,undefined){
     
     var lastModeChange = 0;
     function changeMode(mode){
-        if(viewMode == mode || lastModeChange < 1) return;
+        if(viewMode == mode || lastModeChange < 2) return;
         lastModeChange = 0;
         viewMode = mode;
         if(viewMode == 1){
-            viewLock = bodiesByName[activePrimary].id;
             zoom.scale(viewTransition[0]);
             scale = zoom.scale();
             mercator.translate([0,0]);
-            center[0] = (-bodies[viewLock].x-bodies[viewLock].center.x)*scale + width/2;
-            center[1] = (-bodies[viewLock].y-bodies[viewLock].center.y)*scale + width/2;
+            center[0] = -bodies[viewTransition[2]].trueX*scale + width/2;
+            center[1] = -bodies[viewTransition[2]].trueY*scale + width/2;
             zoom.translate(center);
             path.projection(projection);
         }
         if(viewMode == 2){
             viewTransition[0] = scale;
             viewTransition[1] = (width-1)/2/pi;
+            center = [width/2,height/2];
             zoom.scale(viewTransition[1]);
-            zoom.translate([width/2,height/2]);
+            zoom.translate(center);
             path.projection(mercator);
-            viewLock = -1;
         }
         d3.select("#main-container").call(zoom.event);
     }
+
+
     //keep track of all of 'em for looping
     var bodies = [];
     var bodiesByName = {};
@@ -251,6 +291,8 @@ var Map = (function(win,doc,undefined){
         this.r = 0;
         this.x = 0;                     //these are in meters with sun at origin
         this.y = 0;
+        this.trueX = 0;
+        this.trueY = 0;
         this.viewX = 0;                 //these are in pixels relative to viewport
         this.viewY = 0;
         this.targetSize = 0;
@@ -302,6 +344,14 @@ var Map = (function(win,doc,undefined){
         this.r = this.getR(this.trueAnomaly)||0;
         this.x = (this.r * Math.cos(this.trueAnomaly+this.yaw));
         this.y = this.r * Math.sin(this.trueAnomaly+this.yaw);
+        this.trueX = this.x;
+        this.trueY = this.y;
+        var c = this.center;
+        while(c.center){
+            this.trueX += c.x;
+            this.trueY += c.y;
+            c = c.center;
+        }
 
         if(this.satellites.length){
             this.satellites = this.satellites.sort(function(a,b){ return a.majorAxis - b.majorAxis; });
@@ -312,21 +362,6 @@ var Map = (function(win,doc,undefined){
     }
     Body.prototype.change = changeBody;
     function updateBody(dt){
-        this.viewX = ((this.x+this.center.x) * scale) + center[0];
-        this.viewY = ((this.y+this.center.y) * scale) + center[1];
-
-        if(scale > (10/this.majorAxis)){
-            this.drawOrbit = true;
-            this.targetAngle = 2*pi;
-        }else{
-            this.drawOrbit = false;
-            this.targetAngle = 0;
-        }
-        this.drawObject = scale > (50/this.majorAxis) && this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height;
-        if(this.drawObject && this.drawOrbit) visibleObjects.push(this.name);
-        if(this.drawObject && this.drawOrbit && !visiblePrimaries.includes(this.primary)) visiblePrimaries.push(this.primary);
-        this.isPrimary = false;
-
         //point transition effect
         var t = this.targetSize - this.drawSize;
         if(t < -0.25){
@@ -349,6 +384,24 @@ var Map = (function(win,doc,undefined){
         this.highlight = tx > -10 && tx < 10 && ty > -10 && ty < 10
     }
     Body.prototype.update = updateBody;
+    function moveBody(){
+        this.viewX = (this.trueX * scale) + center[0];
+        this.viewY = (this.trueY * scale) + center[1];
+
+        if(scale > (10/this.majorAxis)){
+            this.drawOrbit = true;
+            this.targetAngle = 2*pi;
+        }else{
+            this.drawOrbit = false;
+            this.targetAngle = 0;
+        }
+        this.drawObject = scale > (50/this.majorAxis) && this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height;
+        if(this.drawObject && this.drawOrbit) visibleObjects.push(this.name);
+        if(this.drawObject && this.drawOrbit && !visiblePrimaries.includes(this.primary)) visiblePrimaries.push(this.primary);
+        this.isPrimary = false;
+
+    }
+    Body.prototype.move = moveBody;
     function drawBody(c,scale){
         if(viewMode != 1) return;
         c.save();
@@ -382,23 +435,28 @@ var Map = (function(win,doc,undefined){
             if(this.drawOrbit && this.drawObject){
                 c.save();
                 c.translate(this.x*scale,this.y*scale);
-                if(this.highlight || visibleObjects.length < 6 && this.targetSize <= 15){
+                if(this.highlight && this.targetSize <= 15){
                     c.fillStyle = "#fff";
                     c.beginPath();
                     c.arc(0,0,10,0,2*pi,false);
                     c.fill();
-                    c.fillStyle = "#fff";
-                    c.font = '16px sans-serif';
-                    c.fillText(this.name,20,0);
+                    if(visibleObjects.length >= 15){
+                        c.fillStyle = '#fff';
+                        c.font = '16px sans-serif';
+                        c.textBaseline = 'middle';
+                        c.fillText(this.name,15,0);
+                    }
                 }
                 c.fillStyle = '#0aa';
                 c.beginPath();
                 if(this.isPrimary){
                     this.targetSize = Math.max(this.minSize*scale,15);
                     if(this.targetSize > 15){
-                        viewLock = this.id;
                         projection.alpha(planetWarp(this.drawSize));
-                        if(projection.alpha() == 1){ changeMode(2); }
+                        if(projection.alpha() == 1){
+                            viewTransition[2] = this.id;
+                            changeMode(2); 
+                        }
                         ortho.scale(this.drawSize);
                         mercator.scale(this.drawSize/4);
                         ortho.rotate([0,planetRotation(this.drawSize)]);
@@ -416,7 +474,6 @@ var Map = (function(win,doc,undefined){
                             c.stroke();
                         }
                     }else{
-                        viewLock = -1;
                         c.beginPath();
                         c.arc(0,0,this.drawSize,0,2*pi,false);
                         c.fill();
@@ -456,7 +513,8 @@ var Map = (function(win,doc,undefined){
     o.primaries = function(){return activePrimary;}
     o.warp = function(){return planetW;}
     o.lock = function(){return viewLock;}
-    o.center = function(){return targetCenter;}
+    o.center = function(){return center;}
+    o.labels = function(){return labelLinks;}
     return o;
 
 })(window,document);
