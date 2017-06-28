@@ -10,6 +10,8 @@ var Map = (function(win,doc,undefined){
         visibleObjects = [],
         visiblePrimaries = [],
         activePrimary = '',
+        viewMode = 1,
+        viewTransition = 0,
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d'),
         fps = 0;
@@ -26,7 +28,7 @@ var Map = (function(win,doc,undefined){
         .translate([width / 2, height / 2]);
     var projection = interpolatedProjection(ortho,mercator);
     var path = d3.geo.path()
-        .projection(projection)
+        .projection(ortho)
         .context(ctx);
     var graticule = d3.geo.graticule();
     var planetContainer = doc.createElement('planet');
@@ -164,8 +166,10 @@ var Map = (function(win,doc,undefined){
     function handleZoom(){
         //TODO: pan and zoom limits
         scale = d3.event.scale;
-        center = d3.event.translate;
-        targetCenter = center;
+        if(viewLock < 0){
+            center = d3.event.translate;
+            targetCenter = center;
+        }
     }
     function handleMouseMove(){
         mousePos = d3.mouse(this);
@@ -330,7 +334,7 @@ var Map = (function(win,doc,undefined){
             if(this.drawOrbit && this.drawObject){
                 c.save();
                 c.translate(this.x*scale,this.y*scale);
-                if(this.highlight || visibleObjects.length < 6){
+                if(this.highlight || visibleObjects.length < 6 && this.targetSize <= 15){
                     c.fillStyle = "#fff";
                     c.beginPath();
                     c.arc(0,0,10,0,2*pi,false);
@@ -345,10 +349,14 @@ var Map = (function(win,doc,undefined){
                     this.targetSize = Math.max(this.minSize*scale,15);
                     if(this.targetSize > 15){
                         viewLock = this.id;
-                        projection.alpha(planetWarp(this.drawSize)); 
+                        projection.alpha(planetWarp(this.drawSize));
+                        if(projection.alpha() == 1){ viewMode = 2; }
+                        else{ viewMode = 1;}
                         ortho.scale(this.drawSize);
                         mercator.scale(this.drawSize/4);
-                        //ortho.rotate([0,planetRotation(this.drawSize)]);
+                        ortho.rotate([0,planetRotation(this.drawSize)]);
+                        if(ortho.rotate()[1] == 0){ path.projection(projection); }
+                        else{ path.projection(ortho); }
                         c.strokeStyle = '#fff';
                         c.lineWidth = 0.5;
                         c.beginPath();
