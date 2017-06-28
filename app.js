@@ -196,7 +196,7 @@ var Map = (function(win,doc,undefined){
         //orbit transition effect
         t = this.targetAngle - this.drawAngle;
         if(t > 0.001){
-            this.drawAngle += Math.ceil(0.3,this.period/1e8)*dt;
+            this.drawAngle += t*dt;
         }else{
             this.drawAngle = this.targetAngle;
         }
