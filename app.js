@@ -5,6 +5,9 @@ var Map = (function(win,doc,undefined){
         center = [0,0],
         viewLock = -1,
         mousePos = [0,0],
+        visibleObjects = [],
+        visiblePrimaries = [],
+        activePrimary = '',
         canvas = $('<canvas#main-canvas>'),
         ctx = canvas.getContext('2d'),
         fps = 0;
@@ -18,7 +21,18 @@ var Map = (function(win,doc,undefined){
         oldTime = time;
         fps = 1/dt;
 
+        visiblePrimaries.length = 0;
+        visibleObjects.length = 0;
         bodies.forEach(function(d){d.update(dt);});
+        if(visiblePrimaries.length == 1) activePrimary = visiblePrimaries[0];
+        if(visiblePrimaries.length == 2){
+            bodiesByName[visiblePrimaries[1]].isPrimary = true;
+            activePrimary = visiblePrimaries[1];
+        }
+        if(visibleObjects.length == 1){
+            bodiesByName[visibleObjects[0]].isPrimary = true;
+            activePrimary = visibleObjects[0];
+        }
         if(viewLock >= 0){
             center[0] = -bodies[viewLock].x*scale + width/2;
             center[1] = -bodies[viewLock].y*scale + height/2;
@@ -34,6 +48,7 @@ var Map = (function(win,doc,undefined){
         c.save();
         //translate is from the zoom behavior and is in pixel coords
         //bodies are in actual meters so scaling is done on their end, not globally
+        //otherwise you get pixel coordinates also scaled down and nothing is visible
         c.translate(center[0],center[1]);
     }
     function init(){
@@ -74,7 +89,6 @@ var Map = (function(win,doc,undefined){
         center = d3.event.translate;
     }
     function handleMouseMove(){
-        console.log(d3.mouse(this));
         mousePos = d3.mouse(this);
     }
 
@@ -93,8 +107,10 @@ var Map = (function(win,doc,undefined){
         this.yaw = 0;                   //really longitude of ascending node
         this.inclination = 0;           //maybe future use, but just make orbit backwards if negative
         this.center = {};               //should be an object
+        this.isOrbited = false;
         this.trueAnomaly = 0;           //calculated
-        this.period = 0;
+        this.eccAnomaly = 0;            //calculated
+        this.period = 0;                //calculated
 
         //other parameters
         this.mass = 0;
@@ -106,17 +122,24 @@ var Map = (function(win,doc,undefined){
         this.y = 0;
         this.viewX = 0;                 //these are in pixels relative to viewport
         this.viewY = 0;
-        this.drawPeriod = 0;
+        this.targetSize = 0;
+        this.drawSize = 5;
+        this.targetAngle = 2*pi;
+        this.drawAngle = 0;
         this.visible = true;
         this.extraTime = 0;             //save skipped frames so we don't lose orbit sync
         this.highlight = false;
+        this.drawObject = false;
+        this.drawOrbit = false;
+        this.isPrimary = false;
 
         for(var i in obj) this[i] = obj[i];
 
-        this.center = bodiesByName[this.orbits]||{x:0,y:0};
+        this.center = bodiesByName[this.primary]||{x:0,y:0};
+        if(this.primary) bodiesByName[this.primary].isOrbited = true;
 
         //input values are relative to Earth and in degrees because wikipedia uses degrees
-        if(this.orbits == "Sol") this.majorAxis *= AU;
+        if(this.primary == "Sol") this.majorAxis *= AU;
         this.meanAnomaly *= pi/180;
         this.inclination *= pi/180;
         this.yaw *= pi/180;
@@ -135,9 +158,10 @@ var Map = (function(win,doc,undefined){
         this.linearEccentricity = Math.sqrt((this.majorAxis*this.majorAxis)-(this.minorAxis*this.minorAxis));
         this.grav = this.mass * 6.67408e-11;
         if(this.id){    //sun doesn't orbit
-            this.period = Math.sqrt((4*pi*pi*this.majorAxis*this.majorAxis*this.majorAxis)/(6.67e-11*(bodies[0].mass+this.mass)));
+            this.period = Math.sqrt((4*pi*pi*this.majorAxis*this.majorAxis*this.majorAxis)/(6.67e-11*(this.center.mass+this.mass)));
         }
         this.trueAnomaly = meanToTrue(this.eccentricity,this.meanAnomaly);
+        this.eccAnomaly = trueToEcc(this.eccentricity,this.trueAnomaly);
         this.r = this.getR(this.trueAnomaly)||0;
         this.x = (this.r * Math.cos(this.trueAnomaly+this.yaw));
         this.y = this.r * Math.sin(this.trueAnomaly+this.yaw);
@@ -147,8 +171,35 @@ var Map = (function(win,doc,undefined){
         this.viewX = ((this.x+this.center.x) * scale) + center[0];
         this.viewY = ((this.y+this.center.y) * scale) + center[1];
 
-        this.visible = this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height;
-        
+        if(scale > (10/this.majorAxis)){
+            this.drawOrbit = true;
+            this.targetAngle = 2*pi;
+        }else{
+            this.drawOrbit = false;
+            this.targetAngle = 0;
+        }
+        this.drawObject = scale > (50/this.majorAxis) && this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height;
+        if(this.drawObject && this.drawOrbit) visibleObjects.push(this.name);
+        if(this.drawObject && this.drawOrbit && !visiblePrimaries.includes(this.primary)) visiblePrimaries.push(this.primary);
+        this.isPrimary = false;
+
+        //point transition effect
+        var t = this.targetSize - this.drawSize;
+        if(t < -0.25){
+            this.drawSize += t*dt*20;
+        }else if (t > 0.25){
+            this.drawSize += t*dt*10;
+        }
+        if(this.drawSize < 0) this.drawSize = 0;
+        //orbit transition effect
+        t = this.targetAngle - this.drawAngle;
+        if(t > 0.001){
+            this.drawAngle += 1e8/this.period*dt;
+        }else{
+            this.drawAngle = this.targetAngle;
+        }
+        if(this.drawAngle < 0) this.drawAngle = 0;
+
         //mouseover testing
         var tx = this.viewX - mousePos[0], ty = this.viewY - mousePos[1];
         this.highlight = tx > -10 && tx < 10 && ty > -10 && ty < 10
@@ -156,59 +207,67 @@ var Map = (function(win,doc,undefined){
     Body.prototype.update = updateBody;
     function drawBody(c,scale){
         c.save();
-        if(this.center) c.translate(this.center.x*scale,this.center.y*scale);
-        //orbit trace
-        //TODO: change prominence of orbits based on scale
-        if(scale > (10/this.majorAxis)){
-            c.save();
-            c.rotate(this.yaw);
-            c.translate(-this.linearEccentricity*scale,0)
-            c.strokeStyle = '#fff';
-            c.lineWidth = 0.25;
-            c.beginPath();
-            c.ellipse(0,0,this.majorAxis*scale,this.minorAxis*scale,0,
-                0,2*pi,false);
-            c.stroke();
-            c.restore();
-        }
-        //drawing the body itself, don't do it unless we're kinda close
-        //TODO: draw point initially, then a circle depending on size
-
-        if(this.type == 0){
+        //keep everything relative to it's orbital primary
+        c.translate(this.center.x*scale,this.center.y*scale);
+        if(this.type == 1){         //star
             c.save();
             c.fillStyle = this.drawColor;
             c.beginPath();
-            c.moveTo(2,2);
-            c.lineTo(0,12);
-            c.lineTo(-2,2);
-            c.lineTo(12,0);
-            c.lineTo(-2,-2);
-            c.lineTo(0,-12);
-            c.lineTo(2,-2);
-            c.lineTo(-12,0);
-            c.closePath();
+            c.moveTo(2,2); c.lineTo(0,12); c.lineTo(-2,2);
+            c.lineTo(12,0); c.lineTo(-2,-2); c.lineTo(0,-12);
+            c.lineTo(2,-2); c.lineTo(-12,0); c.closePath();
             c.fill();
             c.restore();
         }
-
-        if(this.id && scale > (50/this.majorAxis)){
-            //TODO: draw just offscreen stuff too, will depend on size
-            if(this.type > 0 && this.visible){
+        if(this.type == 2){         //planet/moon
+            //orbit trace
+            if(this.drawOrbit && this.primary == activePrimary){
+                c.save();
+                c.rotate(this.yaw);
+                c.translate(-this.linearEccentricity*scale,0)
+                c.strokeStyle = '#fff';
+                c.lineWidth = 0.25;
+                c.beginPath();
+                c.ellipse(0,0,this.majorAxis*scale,this.minorAxis*scale,0,
+                    this.eccAnomaly,this.drawAngle+this.eccAnomaly,false);
+                c.stroke();
+                c.restore();
+            }
+            //point
+            if(this.drawOrbit && this.drawObject){
                 c.save();
                 c.translate(this.x*scale,this.y*scale);
-                if(this.highlight){
+                if(this.highlight || visibleObjects.length < 6){
                     c.fillStyle = "#fff";
                     c.beginPath();
                     c.arc(0,0,10,0,2*pi,false);
                     c.fill();
                     c.fillStyle = "#fff";
                     c.font = '16px sans-serif';
-                    c.fillText(this.name,20,-5);
+                    c.fillText(this.name,20,0);
                 }
-                c.fillStyle = this.drawColor||'#ddd';
+                c.fillStyle = '#0aa';
                 c.beginPath();
-                c.arc(0,0,5,0,2*pi,false);
-                c.fill();
+                if(this.isPrimary){
+                    this.targetSize = 15;
+                    c.arc(0,0,this.drawSize,0,2*pi,false);
+                    c.fill();
+                    c.strokeStyle = "#0dd";
+                    if(this.isOrbited){
+                        c.setLineDash([5,2]);
+                        c.lineWidth = 0.5;
+                    }else{
+                        c.setLineDash([1,5]);
+                        c.lineWidth = 3;
+                    }
+                    c.beginPath();
+                    c.arc(0,0,this.drawSize+5,0,2*pi,false);
+                    c.stroke();
+                }else{
+                    this.targetSize = 5;
+                    c.arc(0,0,this.drawSize,0,2*pi,false);
+                    c.fill();
+                }
                 c.restore();
             }
         }
@@ -223,7 +282,9 @@ var Map = (function(win,doc,undefined){
 
     var o = {};
     o.bodies = bodies;
+    o.bodiesByName = bodiesByName;
     o.scale = function(){return scale;}
+    o.primaries = function(){return activePrimary;}
     return o;
 
 })(window,document);
@@ -274,5 +335,10 @@ function meanToTrue(ecc, anom){
         var cosf = (Math.cos(t) - ecc)/(1 - (ecc * Math.cos(t)));
         return Math.atan2(sinf,cosf);
     }
+function trueToEcc(ecc,anom){
+    var sinE = Math.sin(anom)*Math.sqrt(1 - ecc*ecc)/(1 + ecc * Math.cos(anom));
+    var cosE = (ecc + Math.cos(anom))/(1 + ecc * Math.cos(anom));
+    return Math.atan2(sinE, cosE);
+}
 var AU = 149598023000;
 var pi = Math.PI;
