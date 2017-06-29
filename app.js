@@ -68,6 +68,7 @@ var Map = (function(win,doc,undefined){
     //label layout setup
     var forceLabels = d3.layout.force()
             .gravity(0)
+            .friction(0.8)
             .linkStrength(0.5);
     
     //basic loop stuff
@@ -117,13 +118,38 @@ var Map = (function(win,doc,undefined){
             bodiesByName[visibleObjects[0]].isPrimary = true;
             activePrimary = visibleObjects[0];
         }
-        labelNodes.length = 0;
-        labelLinks.length = 0;
-        visibleObjects.forEach(function(d,i){
+        var t = visibleObjects.map(function(d){return d;});
+        for(var i = 0; i < labelNodes.length;i++){
+            if(i%2) continue;
+            var j = t.indexOf(labelNodes[i].name);
+            if(j >= 0){
+                t.splice(j,1);
+                labelNodes[i+1].x = bodiesByName[labelNodes[i].name].viewX;
+                labelNodes[i+1].px = labelNodes[i+1].x;
+                labelNodes[i+1].y = bodiesByName[labelNodes[i].name].viewY;
+                labelNodes[i+1].py = labelNodes[i+1].y;
+            }else{
+                labelNodes.splice(i,2);
+                i--;
+            }
+        }
+        t.forEach(function(d,i){
             labelNodes.push({name:d});
             labelNodes.push({x:bodiesByName[d].viewX,y:bodiesByName[d].viewY,fixed:true});
-            labelLinks.push({source:i*2+1,target:i*2});
         });
+        labelLinks.length = 0;
+        labelNodes.forEach(function(d,i){
+            if(i%2) return;
+            labelLinks.push({source:i+1,target:i});
+        });
+
+        // labelNodes.length = 0;
+        // labelLinks.length = 0;
+        // visibleObjects.forEach(function(d,i){
+        //     labelNodes.push({name:d});
+        //     labelNodes.push({x:bodiesByName[d].viewX,y:bodiesByName[d].viewY,fixed:true});
+        //     labelLinks.push({source:i*2+1,target:i*2});
+        // });
         forceLabels.nodes(labelNodes).links(labelLinks).start();
     }
     function draw(c){
@@ -514,7 +540,7 @@ var Map = (function(win,doc,undefined){
     o.warp = function(){return planetW;}
     o.lock = function(){return viewLock;}
     o.center = function(){return center;}
-    o.labels = function(){return labelLinks;}
+    o.labels = function(){return labelNodes;}
     return o;
 
 })(window,document);
