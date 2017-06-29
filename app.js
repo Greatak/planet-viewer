@@ -68,7 +68,8 @@ var Map = (function(win,doc,undefined){
     //label layout setup
     var forceLabels = d3.layout.force()
             .gravity(0)
-            .friction(0.8)
+            .friction(0.6)
+            .linkDistance(20)
             .linkStrength(0.5);
     
     //basic loop stuff
@@ -108,7 +109,7 @@ var Map = (function(win,doc,undefined){
     function updateMove(dt){
         visiblePrimaries.length = 0;
         visibleObjects.length = 0;
-        bodies.forEach(function(d){d.move(dt);});
+        bodies.forEach(function(d){d.move();});
         if(visiblePrimaries.length == 1) activePrimary = visiblePrimaries[0];
         if(visiblePrimaries.length == 2){
             bodiesByName[visiblePrimaries[1]].isPrimary = true;
@@ -142,14 +143,6 @@ var Map = (function(win,doc,undefined){
             if(i%2) return;
             labelLinks.push({source:i+1,target:i});
         });
-
-        // labelNodes.length = 0;
-        // labelLinks.length = 0;
-        // visibleObjects.forEach(function(d,i){
-        //     labelNodes.push({name:d});
-        //     labelNodes.push({x:bodiesByName[d].viewX,y:bodiesByName[d].viewY,fixed:true});
-        //     labelLinks.push({source:i*2+1,target:i*2});
-        // });
         forceLabels.nodes(labelNodes).links(labelLinks).start();
     }
     function draw(c){
@@ -312,6 +305,8 @@ var Map = (function(win,doc,undefined){
         //other parameters
         this.mass = 0;
         this.grav = 0;                  //calculated
+        this.points = [];
+        this.polarPoints = [];
 
         //drawing variables
         this.r = 0;
@@ -321,6 +316,7 @@ var Map = (function(win,doc,undefined){
         this.trueY = 0;
         this.viewX = 0;                 //these are in pixels relative to viewport
         this.viewY = 0;
+        this.viewPoints = [];
         this.targetSize = 0;
         this.drawSize = 5;
         this.minSize = 0;
@@ -344,11 +340,15 @@ var Map = (function(win,doc,undefined){
         this.yaw *= pi/180;
         //local star is relative to the sun though
         this.mass *= this.id?5.97237e24:1.98855e30;
-        this.majorAxis /= 1e6;
+        
+        if(this.type == 3){
+            this.viewPoints = this.points.map(function(){return [0,0];});
+            this.polarPoints = this.points.map(function(d){return [d[0],d[1]*(pi/180)];})
+        }
 
         this.change();
 
-        if(this.primary){ 
+        if(this.primary && this.type == 2){
             bodiesByName[this.primary].isOrbited = true;
             bodiesByName[this.primary].satellites.push(this);
         }
@@ -377,6 +377,18 @@ var Map = (function(win,doc,undefined){
             this.trueX += c.x;
             this.trueY += c.y;
             c = c.center;
+        }
+
+        if(this.type == 3){
+            var a = [0,0];
+            for(var i = this.points.length;i--;){
+                this.points[i][0] = this.polarPoints[i][0] * Math.cos(this.polarPoints[i][1]);
+                this.points[i][1] = this.polarPoints[i][0] * Math.sin(this.polarPoints[i][1]);
+                a[0] += this.points[i][0];
+                a[1] += this.points[i][1];
+            }
+            this.x = a[0]/this.points.length;
+            this.y = a[1]/this.points.length;
         }
 
         if(this.satellites.length){
@@ -411,21 +423,35 @@ var Map = (function(win,doc,undefined){
     }
     Body.prototype.update = updateBody;
     function moveBody(){
-        this.viewX = (this.trueX * scale) + center[0];
-        this.viewY = (this.trueY * scale) + center[1];
+        if(this.type == 2){
+            this.viewX = (this.trueX * scale) + center[0];
+            this.viewY = (this.trueY * scale) + center[1];
 
-        if(scale > (10/this.majorAxis)){
-            this.drawOrbit = true;
-            this.targetAngle = 2*pi;
-        }else{
-            this.drawOrbit = false;
-            this.targetAngle = 0;
+            if(scale > (10/this.majorAxis)){
+                this.drawOrbit = true;
+                this.targetAngle = 2*pi;
+            }else{
+                this.drawOrbit = false;
+                this.targetAngle = 0;
+            }
+            this.drawObject = scale > (50/this.majorAxis) && this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height;
+            if(this.drawObject && this.drawOrbit) visibleObjects.push(this.name);
+            if(this.drawObject && this.drawOrbit && !visiblePrimaries.includes(this.primary)) visiblePrimaries.push(this.primary);
+            this.isPrimary = false;
         }
-        this.drawObject = scale > (50/this.majorAxis) && this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height;
-        if(this.drawObject && this.drawOrbit) visibleObjects.push(this.name);
-        if(this.drawObject && this.drawOrbit && !visiblePrimaries.includes(this.primary)) visiblePrimaries.push(this.primary);
-        this.isPrimary = false;
-
+        if(this.type == 3){
+            this.viewX = ((this.x + this.center.x) * scale) + center[0];
+            this.viewY = ((this.y + this.center.y) * scale) + center[1];
+            this.drawObject = this.viewX > 0 && this.viewY > 0 && this.viewX < width && this.viewY < height;
+            var that = this;
+            this.points.forEach(function(d,i){
+                that.viewPoints[i][0] = (d[0] * scale) + center[0];
+                that.viewPoints[i][1] = (d[1] * scale) + center[1];
+                if(that.viewPoints[i][0] > 0 && that.viewPoints[i][1] > 0 && that.viewPoints[i][0] < width && that.viewPoints[i][1] < height){
+                    that.drawObject = true;
+                }
+            });
+        }
     }
     Body.prototype.move = moveBody;
     function drawBody(c,scale){
@@ -522,6 +548,17 @@ var Map = (function(win,doc,undefined){
                 }
                 c.restore();
             }
+        }
+        if(this.type == 3){         //region
+            c.fillStyle = '#fff';
+            c.globalAlpha = 0.2;
+            c.beginPath();
+            c.moveTo(this.points[0][0]*scale,this.points[0][1]*scale);
+            this.points.forEach(function(d){
+                c.lineTo(d[0]*scale,d[1]*scale);
+            });
+            c.closePath();
+            c.fill();
         }
         c.restore();
     }
