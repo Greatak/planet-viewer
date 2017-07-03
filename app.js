@@ -19,6 +19,9 @@ var Map = (function(win,doc,undefined){
     //##ZOOM BEHAVIOR
     var zoom = d3.behavior.zoom()
         .on('zoom',handleZoom);
+    var zooming = false,
+        lastScale = 0,
+        lastZoomTarget = '';
 
     //##SCALES
     var planetRotation = d3.scale.linear()      //when we first see a planet, we see it from the north pole
@@ -122,6 +125,12 @@ var Map = (function(win,doc,undefined){
                 if(scale < b.linearEccentricity) scale = b.linearEccentricity;
             });
             scale = width/scale;
+            bodies.forEach(function(d){
+                if(d.satellites.length){
+                    d.satellites = d.satellites.sort(function(a,b){ return a.majorAxis - b.majorAxis; });
+                    d.pointMaxZoom = (height/4)/d.satellites[d.satellites.length-1].majorAxis;
+                }
+            });
             start();
         });
     }
@@ -174,7 +183,26 @@ var Map = (function(win,doc,undefined){
         needsMove = false;
         visibleObjects.length = 0;
         bodies.forEach(function(d){ d.update(); });
-        console.log(visibleObjects.length)
+        if(lastScale - scale > 0){
+            //TODO: This should probably be based on buttons, not trying to intuit intent
+            //zoomed out
+            if(visibleObjects.length == 1){
+                var z = Math.pow(2,visibleObjects[0].pointMinZoom+2)*pixelsPerMeter;
+                if(z < scale){
+                    if(!zooming) zoomTo(z,
+                    [visibleObjects[0].x+visibleObjects[0].center.x,visibleObjects[0].y+visibleObjects[0].center.y]);
+                }
+            }
+        }else if(lastScale - scale < 0){
+            //zoomed in
+            if(visibleObjects.length == 1 
+                && lastZoomTarget != visibleObjects[0].name
+                && visibleObjects[0].pointMaxZoom > scale){
+                lastZoomTarget = visibleObjects[0].name;
+                if(!zooming) zoomTo(visibleObjects[0].pointMaxZoom,
+                    [visibleObjects[0].x+visibleObjects[0].center.x,visibleObjects[0].y+visibleObjects[0].center.y]);
+            }
+        }
     }
 
     //fires every time we need to redraw
@@ -197,6 +225,7 @@ var Map = (function(win,doc,undefined){
     }
     function handleZoom(){
         //scale = d3.event.scale;
+        lastScale = scale;
         scale = zoom.scale();
         coordinates[0] = Math.floor(Math.log(scale/pixelsPerMeter)/Math.log(2));
         //center = d3.event.translate;
@@ -225,15 +254,23 @@ var Map = (function(win,doc,undefined){
         return body.latus / (1 + (body.eccentricity*Math.cos(angle)));
     }
     function zoomTo(z,p){
-        d3.transition().duration(500).tween('zoom',function(){
-            var is = d3.interpolate(zoom.scale(),Math.pow(2,z)*pixelsPerMeter);
+        //mainContainer.interrupt('zoom');
+        zooming = true;
+        p[0] *= -z;
+        p[0] += width/2;
+        p[1] *= -z;
+        p[1] += height/2;
+        mainContainer.transition().duration(2000).ease('linear').tween('zoom',function(){
+            var is = d3.interpolate(zoom.scale(),z);
             var it = d3.interpolate(zoom.translate(),p);
             return function(i){
                 zoom.scale(is(i));
                 zoom.translate(it(i));
                 handleZoom();
             }
-        });
+        })
+        .each('end',function(){ zooming = false; })
+        .each('interrupt',function(){ zooming = false; });
     }
 
     //#BODY DEFINITION
@@ -261,6 +298,7 @@ var Map = (function(win,doc,undefined){
         this.density = 0;
         this.mass = 0;
         this.grav = 0;
+        this.albedo = 1;
         this.points = [];
         this.polarPoints = [];
         this.x = 0;                     //these are centroid for regions, otherwise same as points[0]
@@ -276,6 +314,7 @@ var Map = (function(win,doc,undefined){
         this.orbitMinZoom = 0;
         this.pointVisible = true;
         this.pointMinZoom = 0;
+        this.pointMaxZoom = 0;
         this.pointSize = 5;
 
 
@@ -328,6 +367,7 @@ var Map = (function(win,doc,undefined){
         //rendering calculations
         if(!this.orbitMinZoom) this.orbitMinZoom = Math.floor(Math.log((10/this.majorAxis)/pixelsPerMeter)/Math.log(2));
         if(!this.pointMinZoom) this.pointMinZoom = this.orbitMinZoom + 2;
+        if(!this.pointMaxZoom) this.pointMaxZoom = (height/4)/(this.radius||1);
         //clerical
         if(this.primary){
             bodiesByName[this.primary].satellites.push(this);
@@ -397,6 +437,7 @@ var Map = (function(win,doc,undefined){
                     c.beginPath();
                     c.arc(0,0,this.pointSize,0,2*pi);
                     c.fillStyle = '#ff0';
+                    c.globalAlpha = Math.min(this.albedo+0.5,1);
                     c.fill();
                 }else{
                     c.beginPath();
@@ -423,8 +464,8 @@ var Map = (function(win,doc,undefined){
     out.bodiesByName = bodiesByName;
     out.bodyTree = bodyTree;
     out.init = init;
-    out.test = function(){
-        zoomTo(-12,[0,0]);
+    out.test = function(what){
+        centerOn(bodiesByName[what].x,bodiesByName[what].y);
     }
     return out;
 })(window,document);
