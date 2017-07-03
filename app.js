@@ -81,7 +81,8 @@ var Map = (function(win,doc,undefined){
     var viewMode = 1,                                   //system or planetmode
         visibleObjects = [],                            //how many distinct objects are visible on screen
         visiblePrimaries = [],                          //how many of them have satellites
-        needsMove = true;                               //we won't handle movements unless we've zoomed
+        needsMove = true,                               //we won't handle movements unless we've zoomed
+        highlightedObject = -1;
 
     //##DEBUGGING
     var fps = 0;
@@ -175,6 +176,7 @@ var Map = (function(win,doc,undefined){
 
     //fires every loop()
     function tick(dt){
+        highlightedObject = -1;
         visibleObjects.forEach(function(d){ d.tick(dt); });
     }
 
@@ -221,7 +223,11 @@ var Map = (function(win,doc,undefined){
         mousePosition = d3.mouse(this);
     }
     function handleClick(e){
-
+        //highlighted object doesn't change
+        if(highlightedObject != -1){
+            bodies.forEach(function(d){ d.isFocus = false; })
+            bodies[highlightedObject].isFocus = true;
+        }
     }
     function handleZoom(){
         //scale = d3.event.scale;
@@ -307,7 +313,6 @@ var Map = (function(win,doc,undefined){
         this.drawOrbit = true;
         this.drawPoint = true;
         //drawing variables
-        this.inView = false;
         this.viewPoints = [];
         this.drawAngle = 2*pi;
         this.orbitVisible = true;
@@ -316,6 +321,12 @@ var Map = (function(win,doc,undefined){
         this.pointMinZoom = 0;
         this.pointMaxZoom = 0;
         this.pointSize = 5;
+        this.highlight = false;
+        this.highTarget = 0;
+        this.highSize = 0;
+        //clerical variables
+        this.inView = false;
+        this.isFocus = false;
 
 
         for(var i in obj){ this[i] = obj[i]; }
@@ -379,7 +390,15 @@ var Map = (function(win,doc,undefined){
         return this;
     }
     function tickBody(dt){
+        //transitions
+        var t = this.highTarget - this.highSize;
+        if(t > 0.05 || t < -0.05) this.highSize += t*dt*10;
 
+        //mouseover testing
+        var tx = this.viewPoints[0][0] - mousePosition[0], ty = this.viewPoints[0][1] - mousePosition[1];
+        this.highlight = (tx > -10 && tx < 10 && ty > -10 && ty < 10);
+        if(this.highlight){ highlightedObject = this.id; }
+        this.highTarget = this.highlight||this.isFocus?this.pointSize+10:0;
     }
     Body.prototype.tick = tickBody;
     function updateBody(){
@@ -388,8 +407,8 @@ var Map = (function(win,doc,undefined){
                 && (this.y+this.center.y)*scale+center[1] > 0 && (this.y+this.center.y)*scale+center[1] < height;
             var that = this;
             this.points.forEach(function(d,i){
-                that.viewPoints[i][0] = d[0]*scale + center[0];
-                that.viewPoints[i][1] = d[1]*scale + center[1];
+                that.viewPoints[i][0] = (d[0]+that.center.x)*scale + center[0];
+                that.viewPoints[i][1] = (d[1]+that.center.y)*scale + center[1];
                 if(that.viewPoints[i][0] > 0 && that.viewPoints[i][0] < width
                 && that.viewPoints[i][1] > 0 && that.viewPoints[i][1] < height){
                     that.inView = true;
@@ -435,7 +454,12 @@ var Map = (function(win,doc,undefined){
                 if(this.points.length == 1){
                     c.translate(this.x*scale,this.y*scale);
                     c.beginPath();
-                    c.arc(0,0,this.pointSize,0,2*pi);
+                    c.arc(0,0,this.highSize,0,2*pi,false);
+                    c.strokeStyle = '#0ff';
+                    c.setLineDash([5,2]);
+                    c.stroke();
+                    c.beginPath();
+                    c.arc(0,0,this.pointSize,0,2*pi,false);
                     c.fillStyle = '#ff0';
                     c.globalAlpha = Math.min(this.albedo+0.5,1);
                     c.fill();
