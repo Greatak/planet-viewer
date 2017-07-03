@@ -9,6 +9,10 @@ var Map = (function(win,doc,undefined){
         ctx = canvas.getContext('2d'),          //how we'll draw it
         pixelsPerMeter = 0;                     //so we can scale to map tiles
 
+    //#COLORS
+    var colorPoint = '#7F6422',
+        colorUI = '#7662BE';
+
     //#COMPONENT VARIABLES
     var coordinates = [],                       //zoom,x,y,radius,angle,latitude,longitude, minimum 3
         coordString = '',
@@ -29,6 +33,10 @@ var Map = (function(win,doc,undefined){
             .clamp(true);
     var planetWarp = d3.scale.linear()          //as we zoom in, it unfolds from orthographic to mercator
             .range([0,1])
+            .clamp(true);
+    var albedoColor = d3.scale.linear()
+            .domain([0,0.5])
+            .range(['#555',colorPoint])
             .clamp(true);
 
     //##PROJECTIONS
@@ -76,6 +84,16 @@ var Map = (function(win,doc,undefined){
     var graticule = d3.geo.graticule(),
         graticuleOutline = graticule.outline();
     graticule = graticule();
+
+    //##LABELS
+    var forceLabels = d3.layout.force()
+            .gravity(0)
+            .friction(0.6)
+            .linkDistance(20)
+            .linkStrength(0.5);
+    var labelNodes = [],
+        labelLinks = [];
+
 
     //##CLERICAL
     var viewMode = 1,                                   //system or planetmode
@@ -205,6 +223,33 @@ var Map = (function(win,doc,undefined){
                     [visibleObjects[0].x+visibleObjects[0].center.x,visibleObjects[0].y+visibleObjects[0].center.y]);
             }
         }
+        var t = visibleObjects.map(function(d){return d.name;});
+        for(var i = 0; i < labelNodes.length;i++){
+            if(i%2) continue;
+            var j = t.indexOf(labelNodes[i].name);
+            if(j >= 0){
+                t.splice(j,1);
+                labelNodes[i+1].px = bodiesByName[labelNodes[i].name].viewPoints[0][0];
+                labelNodes[i+1].x = labelNodes[i+1].px;
+                labelNodes[i+1].py = bodiesByName[labelNodes[i].name].viewPoints[0][1];
+                labelNodes[i+1].y = labelNodes[i+1].py;
+            }else{
+                labelNodes.splice(i,2);
+                i--;
+            }
+        }
+        t.forEach(function(d,i){
+            labelNodes.push({name:d});
+            labelNodes.push({x:bodiesByName[d].viewPoints[0][0],y:bodiesByName[d].viewPoints[0][1],fixed:true});
+        });
+        labelLinks.length = 0;
+        labelNodes.forEach(function(d,i){
+            if(i%2) return;
+            labelLinks.push({source:i+1,target:i});
+        });
+        forceLabels.nodes(labelNodes).links(labelLinks).start();
+        //if you zoom quick, it messes up, needs rate limiting
+        if(!t.length) forceLabels.stop();
     }
 
     //fires every time we need to redraw
@@ -213,7 +258,55 @@ var Map = (function(win,doc,undefined){
         //TODO: figure out if orbits are visible even if object isn't
         c.save();
         c.clearRect(0,0,width,height);
+        
         c.translate(center[0],center[1]);
+        if(visibleObjects.length < 15){
+            visibleObjects.forEach(function(d,i){
+                c.save();
+                c.translate((d.x+d.center.x)*scale,(d.y+d.center.y)*scale);
+                c.strokeStyle = colorUI;
+                c.fillStyle = '#fff';
+                c.font = '16px sans-serif';
+                c.textBaseline = 'bottom';
+                var p = [(10*i+10)*Math.cos(d.polarPoints[0][1]+d.yaw),(5*i+10)*Math.sin(d.polarPoints[0][1]+d.yaw)],
+                    l = c.measureText(d.name).width;
+                c.beginPath();
+                c.moveTo(0,0);
+                c.lineTo(p[0],p[1]);
+                if(p[0] > 0){
+                    c.lineTo(p[0]+l,p[1]);
+                    c.stroke();
+                    c.fillText(d.name,p[0],p[1]);
+                }else{
+                    c.lineTo(p[0]-l,p[1]);
+                    c.stroke();
+                    c.fillText(d.name,p[0]-l,p[1]);
+                }
+                c.restore();
+            });
+        }
+        // if(visibleObjects.length < 15){
+        //     c.strokeStyle = colorUI;
+        //     c.fillStyle = '#fff';
+        //     c.font = '16px sans-serif';
+        //     c.textBaseline = 'bottom';
+        //     labelLinks.forEach(function(d){
+        //         var l = c.measureText(d.target.name);
+        //         c.beginPath();
+        //         c.moveTo(d.source.x,d.source.y);
+        //         c.lineTo(d.target.x,d.target.y);
+        //         if(d.target.x > width/2){
+        //             c.lineTo(d.target.x+l.width,d.target.y);
+        //             c.stroke();
+        //             c.fillText(d.target.name,d.target.x,d.target.y);
+        //         }else{
+        //             c.lineTo(d.target.x-l.width,d.target.y);
+        //             c.stroke();
+        //             c.fillText(d.target.name,d.target.x-l.width,d.target.y);
+        //         }
+        //     });
+        // }
+        //c.translate(center[0],center[1]);
         bodies.forEach(function(d){ d.draw(c); });
         c.restore();
     }
@@ -314,9 +407,10 @@ var Map = (function(win,doc,undefined){
         this.drawPoint = true;
         //drawing variables
         this.viewPoints = [];
-        this.drawAngle = 2*pi;
         this.orbitVisible = true;
         this.orbitMinZoom = 0;
+        this.orbitTarget = 0;
+        this.orbitAngle = 0;
         this.pointVisible = true;
         this.pointMinZoom = 0;
         this.pointMaxZoom = 0;
@@ -379,6 +473,7 @@ var Map = (function(win,doc,undefined){
         if(!this.orbitMinZoom) this.orbitMinZoom = Math.floor(Math.log((10/this.majorAxis)/pixelsPerMeter)/Math.log(2));
         if(!this.pointMinZoom) this.pointMinZoom = this.orbitMinZoom + 2;
         if(!this.pointMaxZoom) this.pointMaxZoom = (height/4)/(this.radius||1);
+        if(!this.drawColor) this.drawColor = albedoColor(this.albedo||1);
         //clerical
         if(this.primary){
             bodiesByName[this.primary].satellites.push(this);
@@ -391,8 +486,17 @@ var Map = (function(win,doc,undefined){
     }
     function tickBody(dt){
         //transitions
+        //highlight ring
         var t = this.highTarget - this.highSize;
         if(t > 0.05 || t < -0.05) this.highSize += t*dt*10;
+        //draw the orbit around
+        t = this.orbitTarget - this.orbitAngle;
+        if(t > 0.001){
+            this.orbitAngle += t*dt;
+        }else{
+            this.orbitAngle = this.orbitTarget;
+        }
+        if(this.orbitAngle < 0) this.orbitAngle = 0;
 
         //mouseover testing
         var tx = this.viewPoints[0][0] - mousePosition[0], ty = this.viewPoints[0][1] - mousePosition[1];
@@ -415,8 +519,9 @@ var Map = (function(win,doc,undefined){
                 }
             });
             this.orbitVisible = this.drawOrbit && coordinates[0] > this.orbitMinZoom;
+            this.orbitTarget = this.orbitVisible?2*pi:0;
             this.pointVisible = this.drawPoint && coordinates[0] > this.pointMinZoom;
-            this.pointSize = Math.max(this.radius*scale,5);
+            this.pointSize = Math.max(this.radius*scale,this.satellites.length?2:5);
             if(this.inView && this.pointVisible) visibleObjects.push(this);
         }
     }
@@ -445,7 +550,7 @@ var Map = (function(win,doc,undefined){
                 c.lineWidth = 0.25;
                 c.beginPath();
                 c.ellipse(0,0,this.majorAxis*scale,this.minorAxis*scale,0,
-                    this.eccAnomaly,this.drawAngle+this.eccAnomaly,false);
+                    this.eccAnomaly,this.orbitAngle+this.eccAnomaly,false);
                 c.stroke();
                 c.restore();
             }
@@ -453,16 +558,21 @@ var Map = (function(win,doc,undefined){
                 c.save();
                 if(this.points.length == 1){
                     c.translate(this.x*scale,this.y*scale);
+                    c.save();
                     c.beginPath();
                     c.arc(0,0,this.highSize,0,2*pi,false);
-                    c.strokeStyle = '#0ff';
+                    c.strokeStyle = colorUI;
                     c.setLineDash([5,2]);
                     c.stroke();
+                    c.restore();
                     c.beginPath();
                     c.arc(0,0,this.pointSize,0,2*pi,false);
-                    c.fillStyle = '#ff0';
-                    c.globalAlpha = Math.min(this.albedo+0.5,1);
+                    c.fillStyle = colorPoint;
                     c.fill();
+                    c.beginPath();
+                    c.arc(0,0,5,0,2*pi,false);
+                    c.strokeStyle = colorPoint;
+                    c.stroke();
                 }else{
                     c.beginPath();
                     c.moveTo(this.points[0][0]*scale,this.points[0][1]*scale);
