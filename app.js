@@ -166,14 +166,15 @@ var Map = (function(win,doc,undefined){
 
     //fires every loop()
     function tick(dt){
-        //TODO: Only tick on bodies in frame
-        bodies.forEach(function(d){ d.tick(dt); });
+        visibleObjects.forEach(function(d){ d.tick(dt); });
     }
 
     //fires every time the view changes probably from zoom()
     function update(){
         needsMove = false;
+        visibleObjects.length = 0;
         bodies.forEach(function(d){ d.update(); });
+        console.log(visibleObjects.length)
     }
 
     //fires every time we need to redraw
@@ -224,7 +225,7 @@ var Map = (function(win,doc,undefined){
         return body.latus / (1 + (body.eccentricity*Math.cos(angle)));
     }
     function zoomTo(z,p){
-        d3.transition().duration(1000).tween('zoom',function(){
+        d3.transition().duration(500).tween('zoom',function(){
             var is = d3.interpolate(zoom.scale(),Math.pow(2,z)*pixelsPerMeter);
             var it = d3.interpolate(zoom.translate(),p);
             return function(i){
@@ -268,6 +269,7 @@ var Map = (function(win,doc,undefined){
         this.drawOrbit = true;
         this.drawPoint = true;
         //drawing variables
+        this.inView = false;
         this.viewPoints = [];
         this.drawAngle = 2*pi;
         this.orbitVisible = true;
@@ -342,14 +344,21 @@ var Map = (function(win,doc,undefined){
     Body.prototype.tick = tickBody;
     function updateBody(){
         if(viewMode == 1){
+            this.inView = (this.x+this.center.x)*scale+center[0] > 0 && (this.x+this.center.x)*scale+center[0] < width
+                && (this.y+this.center.y)*scale+center[1] > 0 && (this.y+this.center.y)*scale+center[1] < height;
             var that = this;
             this.points.forEach(function(d,i){
                 that.viewPoints[i][0] = d[0]*scale + center[0];
                 that.viewPoints[i][1] = d[1]*scale + center[1];
+                if(that.viewPoints[i][0] > 0 && that.viewPoints[i][0] < width
+                && that.viewPoints[i][1] > 0 && that.viewPoints[i][1] < height){
+                    that.inView = true;
+                }
             });
-            this.orbitVisible = coordinates[0] > this.orbitMinZoom;
-            this.pointVisible = coordinates[0] > this.pointMinZoom;
+            this.orbitVisible = this.drawOrbit && coordinates[0] > this.orbitMinZoom;
+            this.pointVisible = this.drawPoint && coordinates[0] > this.pointMinZoom;
             this.pointSize = Math.max(this.radius*scale,5);
+            if(this.inView && this.pointVisible) visibleObjects.push(this);
         }
     }
     Body.prototype.update = updateBody;
