@@ -107,7 +107,7 @@ var Map = (function(win,doc,undefined){
         mainContainer.call(zoom);
         mainContainer.on('click',handleClick);
         mainContainer.on('mousemove',handleMouseMove);
-        d3.select('body').on('resize',handleResize);
+        win.addEventListener('resize',handleResize);
 
         //load data
         d3.json(obj.data,function(data){
@@ -144,6 +144,7 @@ var Map = (function(win,doc,undefined){
         }
         zoom.scale(scale);
         zoom.translate(center);
+        zoom.size([width,height]);
         win.requestAnimationFrame(loop); 
     }
 
@@ -194,13 +195,16 @@ var Map = (function(win,doc,undefined){
 
     }
     function handleZoom(){
-        scale = d3.event.scale;
+        //scale = d3.event.scale;
+        scale = zoom.scale();
         coordinates[0] = Math.floor(Math.log(scale/pixelsPerMeter)/Math.log(2));
-        center = d3.event.translate;
+        //center = d3.event.translate;
+        center = zoom.translate();
         coordinates[1] = center[0]/scale;
         coordinates[2] = center[1]/scale;
         coordString = coordinates.join('/');
         location.hash = coordString;
+        needsMove = true;
     }
     function handleResize(){
         var min = Math.min(win.innerWidth,win.innerHeight);
@@ -218,6 +222,17 @@ var Map = (function(win,doc,undefined){
     function getRadius(body,angle){
         if(!angle) angle = body.trueAnomaly;
         return body.latus / (1 + (body.eccentricity*Math.cos(angle)));
+    }
+    function zoomTo(z,p){
+        d3.transition().duration(1000).tween('zoom',function(){
+            var is = d3.interpolate(zoom.scale(),Math.pow(2,z)*pixelsPerMeter);
+            var it = d3.interpolate(zoom.translate(),p);
+            return function(i){
+                zoom.scale(is(i));
+                zoom.translate(it(i));
+                handleZoom();
+            }
+        });
     }
 
     //#BODY DEFINITION
@@ -255,6 +270,11 @@ var Map = (function(win,doc,undefined){
         //drawing variables
         this.viewPoints = [];
         this.drawAngle = 2*pi;
+        this.orbitVisible = true;
+        this.orbitMinZoom = 0;
+        this.pointVisible = true;
+        this.pointMinZoom = 0;
+        this.pointSize = 5;
 
 
         for(var i in obj){ this[i] = obj[i]; }
@@ -303,6 +323,9 @@ var Map = (function(win,doc,undefined){
             this.x /= this.points.length;
             this.y /= this.points.length;
         }
+        //rendering calculations
+        if(!this.orbitMinZoom) this.orbitMinZoom = Math.floor(Math.log((10/this.majorAxis)/pixelsPerMeter)/Math.log(2));
+        if(!this.pointMinZoom) this.pointMinZoom = this.orbitMinZoom + 2;
         //clerical
         if(this.primary){
             bodiesByName[this.primary].satellites.push(this);
@@ -324,6 +347,9 @@ var Map = (function(win,doc,undefined){
                 that.viewPoints[i][0] = d[0]*scale + center[0];
                 that.viewPoints[i][1] = d[1]*scale + center[1];
             });
+            this.orbitVisible = coordinates[0] > this.orbitMinZoom;
+            this.pointVisible = coordinates[0] > this.pointMinZoom;
+            this.pointSize = Math.max(this.radius*scale,5);
         }
     }
     Body.prototype.update = updateBody;
@@ -343,7 +369,7 @@ var Map = (function(win,doc,undefined){
         }
         if(this.type == 2){
             c.save();
-            if(this.drawOrbit){
+            if(this.orbitVisible){
                 c.save();
                 c.rotate(this.yaw);
                 c.translate(-this.linearEccentricity*scale,0)
@@ -355,12 +381,12 @@ var Map = (function(win,doc,undefined){
                 c.stroke();
                 c.restore();
             }
-            if(this.drawPoint){
+            if(this.pointVisible){
                 c.save();
                 if(this.points.length == 1){
                     c.translate(this.x*scale,this.y*scale);
                     c.beginPath();
-                    c.arc(0,0,5,0,2*pi);
+                    c.arc(0,0,this.pointSize,0,2*pi);
                     c.fillStyle = '#ff0';
                     c.fill();
                 }else{
@@ -388,6 +414,9 @@ var Map = (function(win,doc,undefined){
     out.bodiesByName = bodiesByName;
     out.bodyTree = bodyTree;
     out.init = init;
+    out.test = function(){
+        zoomTo(-12,[0,0]);
+    }
     return out;
 })(window,document);
 
