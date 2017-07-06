@@ -171,11 +171,9 @@ var Map = (function(win,doc,undefined){
                 center[1] = (coordinates[2]*scale);
             }
         }
-        zoom.transform.k = scale;
-        zoom.transform.x  = center[0];
-        zoom.transform.y  = center[1];
-        win.requestAnimationFrame(loop); 
-        //changeViewMode(2);
+        var t = d3.zoomIdentity.translate(center[0],center[1]).scale(scale);
+        canvas.call(zoom.transform,t);
+        win.requestAnimationFrame(loop);
     }
 
     //#MAIN LOOP FUNCTIONS
@@ -204,6 +202,11 @@ var Map = (function(win,doc,undefined){
     function update(){
         needsMove = false;
         if(viewMode == 1){
+            //set the coordinates
+            coordinates[0] = Math.floor(Math.log(scale/pixelsPerMeter)/Math.log(2));
+            coordinates[1] = center[0]/scale;
+            coordinates[2] = center[1]/scale;
+            coordinates.splice(3,2);
             visibleObjects.length = 0;
             bodies.forEach(function(d){ d.update(); });
             if(visibleObjects.length == 1){
@@ -213,39 +216,31 @@ var Map = (function(win,doc,undefined){
                     projMercator.scale(visibleObjects[0].pointSize/4);
                     projOrtho.scale(visibleObjects[0].pointSize);
                     projOrtho.rotate([0,planetRotation(visibleObjects[0].pointSize)]);
-                    if(projOrtho.rotate()[1] == 0){ path.projection(projTransition); }
-                    else{ path.projection(projOrtho); }
-                    if(projTransition.alpha() == 1){
+                    if(projOrtho.rotate()[1] == 0){ 
+                        path.projection(projTransition);
                         viewTransition[2] = visibleObjects[0].id;
-                        //changeViewMode(2); 
+                        changeViewMode(2);  
                     }
-                }
-            }
-            if(lastScale - scale > 0){
-                //TODO: This should probably be based on buttons, not trying to intuit intent
-                //zoomed out
-                if(visibleObjects.length == 1){
-                    var z = Math.pow(2,visibleObjects[0].pointMinZoom+2)*pixelsPerMeter;
-                    if(z < scale){
-                        //if(!zooming) zoomTo(z,
-                        //[visibleObjects[0].x+visibleObjects[0].center.x,visibleObjects[0].y+visibleObjects[0].center.y]);
-                    }
-                }
-            }else if(lastScale - scale < 0){
-                //zoomed in
-                if(visibleObjects.length == 1 
-                    && lastZoomTarget != visibleObjects[0].name
-                    && visibleObjects[0].pointMaxZoom > scale){
-                    lastZoomTarget = visibleObjects[0].name;
-                    //if(!zooming) zoomTo(visibleObjects[0].pointMaxZoom,
-                    //    [visibleObjects[0].x+visibleObjects[0].center.x,visibleObjects[0].y+visibleObjects[0].center.y]);
+                    else{ path.projection(projOrtho); }
                 }
             }
         }else if(viewMode == 2){
-            if(coordinates[0] <= 0){
-                //changeViewMode(1);
+            coordinates[0] = Math.floor(Math.log(scale/256)/Math.log(2));
+            var r = projMercator.invert([width/2,height/2]);
+            coordinates[3] = r[0];
+            coordinates[4] = r[1];
+            projMercator.scale(scale/2/pi);
+            projMercator.translate([center[0],center[1]]);
+            projOrtho.scale(scale);
+            projOrtho.translate([width/2,center[1]]);
+            projTransition.alpha(planetWarp(scale));
+            if(scale < 150){
+                changeViewMode(1);
             }
         }
+        //print coords to the address
+        coordString = coordinates.join('/');
+        location.hash = coordString;
     }
 
     //fires every time we need to redraw
@@ -287,6 +282,7 @@ var Map = (function(win,doc,undefined){
             c.lineWidth = 0.5;
             c.beginPath();
             path(graticule);
+            path(graticuleOutline);
             path(planetTest);
             c.stroke();
         }
@@ -298,7 +294,6 @@ var Map = (function(win,doc,undefined){
         mousePosition = d3.mouse(this);
     }
     function handleClick(e){
-        //highlighted object doesn't change
         if(highlightedObject != -1){
             bodies.forEach(function(d){ d.isFocus = false; })
             bodies[highlightedObject].isFocus = true;
@@ -309,43 +304,20 @@ var Map = (function(win,doc,undefined){
         scale = d3.event.transform.k;
         center[0] = d3.event.transform.x;
         center[1] = d3.event.transform.y;
-        if(viewMode == 1){
-            coordinates[0] = Math.floor(Math.log(scale/pixelsPerMeter)/Math.log(2));
-            coordinates[1] = center[0]/scale;
-            coordinates[2] = center[1]/scale;
-        }else if(viewMode == 2){
-            coordinates[0] = Math.floor(Math.log(scale/256)/Math.log(2));
+        if(viewMode == 2){
             center[0] = Math.min((scale/2)+(width/2),Math.max(-(scale/2)+width/2,center[0]));
             center[1] = Math.min((scale/2)+(height/2),Math.max(-(scale/2)+(height/2),center[1]));
             canvas.node().__zoom.x = center[0];
             canvas.node().__zoom.y = center[1];
-            mapRotation.domain([-scale/2,scale/2]);
-            projMercator.scale(scale/2/pi);
-            projMercator.translate([center[0],center[1]]);
-            projOrtho.scale(scale/2);
-            projOrtho.translate([width/2,center[1]]);
-            projTransition.alpha(planetWarp(scale));
-            var r = projMercator.invert([width/2,height/2]);
-            // if(projTransition.alpha() == 1){
-            //     path.projection(projMercator);
-            //     //projMercator.rotate([r[0],0]);
-            // }else{
-            //     path.projection(projTransition);
-            //     projMercator.rotate([0,0]);
-            // }
-            coordinates[3] = r[0];
-            coordinates[4] = r[1];
         }
-        coordString = coordinates.join('/');
-        location.hash = coordString;
         needsMove = true;
     }
     function handleResize(){
         var min = Math.min(win.innerWidth,win.innerHeight);
         width = min*aspectRatio;
         height = min;
-        canvas.width = width;
-        canvas.height = height;
+        canvas.property('width',width);
+        canvas.property('height',height);
         //TODO: change the scaling stuff
     }
 
@@ -358,24 +330,24 @@ var Map = (function(win,doc,undefined){
         if(viewMode == mode) return;
         viewMode = mode;
         if(viewMode == 1){
-            zoom.scale(viewTransition[0]);
-            scale = zoom.scale();
+            scale = viewTransition[0];
             projMercator.translate([0,0]);
-            //center[0] = -(bodies[viewTransition[2]].x+bodies[viewTransition[2]].center.x)*scale + width/2;
-            //center[1] = -(bodies[viewTransition[2]].y+bodies[viewTransition[2]].center.y)*scale + width/2;
-            center[0] = (coordinates[1]*scale);
-            center[1] = (coordinates[2]*scale);
-            zoom.translate(center);
-            path.projection(projTransition);
+            projOrtho.translate([0,0]);
+            center[0] = (-(bodies[viewTransition[2]].x+bodies[viewTransition[2]].center.x)*scale)+width/2;
+            center[1] = (-(bodies[viewTransition[2]].y+bodies[viewTransition[2]].center.y)*scale)+height/2;
+            var t = d3.zoomIdentity.translate(center[0],center[1]).scale(scale);
+            path.projection(projOrtho);
         }
         if(viewMode == 2){
-            viewTransition[0] = scale;
+            viewTransition[0] = 0.9*scale;
             viewTransition[1] = width;
             //viewTransition[1] = pixelsPerMeter;
             center = [width/2,height/2];
-            scale = width/2/pi;
-            projMercator.translate([0,0]);
-            projMercator.rotate([0,0]);
+            scale = 180;
+            projMercator.scale(scale/2/pi);
+            projMercator.translate([center[0],center[1]]);
+            projOrtho.scale(scale);
+            projOrtho.translate([width/2,center[1]]);
             path.projection(projTransition);
             var t = d3.zoomIdentity.translate(center[0],center[1]).scale(scale);
         }
@@ -596,10 +568,9 @@ var Map = (function(win,doc,undefined){
                     c.translate(this.x*scale,this.y*scale);
                     if(this.onlyVisible && this.pointSize > 20){
                         c.strokeStyle = '#fff';
-                        c.globalAlpha = 0.5;
                         c.lineWidth = 0.5;
                         c.beginPath();
-                        path(graticule);
+                        path(graticuleOutline);
                         //TODO: This is temporary
                         path(planetTest);
                         c.stroke();
