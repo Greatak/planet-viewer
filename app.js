@@ -77,6 +77,7 @@ var Map = (function(win,doc,undefined){
     
     //##MAPS
     var mapData,                                        //when we zoom in, we'll grab map info
+        mapName = '',
         oldMapData,                                     //and keep two sets, just in case
         oldMapName = '';
 
@@ -149,10 +150,6 @@ var Map = (function(win,doc,undefined){
             });
             start();
         });
-        d3.json("earth-contour.json", function(error, world) {
-            if (error) throw error;
-            planetTest = topojson.mesh(world);
-        });
     }
     function start(){ 
         //set initial view
@@ -166,9 +163,15 @@ var Map = (function(win,doc,undefined){
                 coordinates[i] = d;
             });
             if(!coordinates.includes('NaN')){
-                scale = Math.pow(2,coordinates[0])*pixelsPerMeter;
-                center[0] = (coordinates[1]*scale);
-                center[1] = (coordinates[2]*scale);
+                if(coordinates.length == 3){
+                    scale = Math.pow(2,coordinates[0])*pixelsPerMeter;
+                    center[0] = (coordinates[1]*scale);
+                    center[1] = (coordinates[2]*scale);
+                }else if(coordinates.length == 5){
+                    scale = Math.pow(2,coordinates[0])*256;
+                    center = projMercator([coordinates[3],coordinates[4]]);
+                    changeViewMode(2);
+                }
             }
         }
         var t = d3.zoomIdentity.translate(center[0],center[1]).scale(scale);
@@ -211,6 +214,7 @@ var Map = (function(win,doc,undefined){
             bodies.forEach(function(d){ d.update(); });
             if(visibleObjects.length == 1){
                 visibleObjects[0].onlyVisible = true;
+                loadSurface(visibleObjects[0]);
                 if(visibleObjects[0].pointSize > 20){
                     projTransition.alpha(planetWarp(visibleObjects[0].pointSize));
                     projMercator.scale(visibleObjects[0].pointSize/4);
@@ -279,12 +283,19 @@ var Map = (function(win,doc,undefined){
             bodies.forEach(function(d){ d.draw(c); });
         }else if(viewMode == 2){
             c.strokeStyle = '#fff';
-            c.lineWidth = 0.5;
+            c.lineWidth = 0.25;
             c.beginPath();
             path(graticule);
             path(graticuleOutline);
-            path(planetTest);
             c.stroke();
+            c.lineWidth = 0.5;
+            if(mapData){
+                mapData.forEach(function(d){
+                    c.beginPath();
+                    path(d);
+                    c.stroke();
+                });
+            }
         }
         c.restore();
     }
@@ -323,10 +334,6 @@ var Map = (function(win,doc,undefined){
 
     //#OTHER FUNCTIONS
     function changeViewMode(mode){
-
-        //TODO: This has the same damn problem, it's super buggy and jumpy when it transitions
-        //It also doesn't have any way to honor lat,long coords
-
         if(viewMode == mode) return;
         viewMode = mode;
         if(viewMode == 1){
@@ -340,8 +347,7 @@ var Map = (function(win,doc,undefined){
         }
         if(viewMode == 2){
             viewTransition[0] = 0.9*scale;
-            viewTransition[1] = width;
-            //viewTransition[1] = pixelsPerMeter;
+            viewTransition[1] = 180;
             center = [width/2,height/2];
             scale = 180;
             projMercator.scale(scale/2/pi);
@@ -353,28 +359,29 @@ var Map = (function(win,doc,undefined){
         }
         canvas.call(zoom.transform,t);
     }
+    function loadSurface(what){
+        if(oldMapName == what.name){
+            mapData = oldMapData;
+        }else{
+            if(what.data){
+                d3.json(what.data,function(error,world){
+                    if(error) console.log(error);
+                    oldMapData = mapData;
+                    oldMapName = mapName;
+                    mapName = what.name;
+                    mapData =  topojson.feature(world, world.objects.contour).features;
+                });
+            }else{
+                oldMapData = mapData;
+                oldMapName = mapName;
+                mapName = what.name;
+                mapData =  null;
+            }
+        }
+    }
     function getRadius(body,angle){
         if(!angle) angle = body.trueAnomaly;
         return body.latus / (1 + (body.eccentricity*Math.cos(angle)));
-    }
-    function zoomTo(z,p){
-        //mainContainer.interrupt('zoom');
-        zooming = true;
-        p[0] *= -z;
-        p[0] += width/2;
-        p[1] *= -z;
-        p[1] += height/2;
-        mainContainer.transition().duration(2000).ease('linear').tween('zoom',function(){
-            var is = d3.interpolate(zoom.scale(),z);
-            var it = d3.interpolate(zoom.translate(),p);
-            return function(i){
-                zoom.scale(is(i));
-                zoom.translate(it(i));
-                handleZoom();
-            }
-        })
-        .each('end',function(){ zooming = false; })
-        .each('interrupt',function(){ zooming = false; });
     }
 
     //#BODY DEFINITION
@@ -571,8 +578,11 @@ var Map = (function(win,doc,undefined){
                         c.lineWidth = 0.5;
                         c.beginPath();
                         path(graticuleOutline);
-                        //TODO: This is temporary
-                        path(planetTest);
+                        if(mapData){
+                            mapData.forEach(function(d){
+                                path(d);
+                            });
+                        }
                         c.stroke();
                     }else{
                         c.save();
