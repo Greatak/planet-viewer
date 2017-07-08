@@ -2,16 +2,20 @@ var Map = (function(win,doc,undefined){
 
     //#GLOBAL VARIABLES
     var width = 0,                              //width of the map canvas
+        trueWidth = 0,                          //in landscape, center it left, but draw whole screen
         height = 0,                             //height of the map canvas
         aspectRatio = 1,                        //for now we'll just force a square canvas
         mainContainer,                          //where does the canvas go?
-        canvas,      //where we'll be drawing everything
-        ctx,          //how we'll draw it
+        canvas,                                 //where we'll be drawing everything
+        ctx,                                    //how we'll draw it
+        infoContainer,                          //where to render the infobox in
         pixelsPerMeter = 0;                     //so we can scale to map tiles
 
-    //#COLORS
-    var colorPoint = '#7F6422',
-        colorUI = '#7662BE';
+    //#STYLE
+    var colorPoint = '#FCB52C',
+        colorUI = '#7662BE',
+        fontFamily = 'Open Sans',
+        fontSize = '16px';
 
     //#COMPONENT VARIABLES
     var coordinates = [],                       //zoom,x,y,radius,angle,latitude,longitude, minimum 3
@@ -92,7 +96,8 @@ var Map = (function(win,doc,undefined){
         visibleObjects = [],                            //how many distinct objects are visible on screen
         visiblePrimaries = [],                          //how many of them have satellites
         needsMove = true,                               //we won't handle movements unless we've zoomed
-        highlightedObject = -1;
+        highlightedObject = -1,
+        focusedObject = 0;
 
     //##DEBUGGING
     var fps = 0;
@@ -107,6 +112,7 @@ var Map = (function(win,doc,undefined){
             console.error('Could not find container (#' + obj.container + ')');
             return;
         }
+        infoContainer = d3.select('#info-container');
         canvas = mainContainer.append('canvas');
         canvas.property('id','map-container');
         ctx = canvas.node().getContext('2d');
@@ -114,9 +120,10 @@ var Map = (function(win,doc,undefined){
         //set the size of the canvas
         //TODO: custom aspect ratio
         var min = Math.min(win.innerWidth,win.innerHeight);
+        trueWidth = win.innerWidth
         width = min*aspectRatio;
         height = min;
-        canvas.property('width', width);
+        canvas.property('width', trueWidth);
         canvas.property('height', height);
         //set the scales
         //zoom.translateExtent([[-3.5,-3.5],[3.5,3.5]]);
@@ -199,6 +206,12 @@ var Map = (function(win,doc,undefined){
     function tick(dt){
         highlightedObject = -1;
         visibleObjects.forEach(function(d){ d.tick(dt); });
+        infoContainer.html('');
+        if(highlightedObject != -1){
+            bodies[highlightedObject].infobox(infoContainer,true);
+        }else{
+            bodies[focusedObject].infobox(infoContainer,false);
+        }
     }
 
     //fires every time the view changes probably from zoom()
@@ -230,11 +243,11 @@ var Map = (function(win,doc,undefined){
             }
         }else if(viewMode == 2){
             coordinates[0] = Math.floor(Math.log(scale/256)/Math.log(2));
+            projMercator.scale(scale/2/pi);
+            projMercator.translate([center[0],center[1]]);
             var r = projMercator.invert([width/2,height/2]);
             coordinates[3] = r[0];
             coordinates[4] = r[1];
-            projMercator.scale(scale/2/pi);
-            projMercator.translate([center[0],center[1]]);
             projOrtho.scale(scale);
             projOrtho.translate([width/2,center[1]]);
             projTransition.alpha(planetWarp(scale));
@@ -252,7 +265,7 @@ var Map = (function(win,doc,undefined){
         //TODO: only draw bodies in frame
         //TODO: figure out if orbits are visible even if object isn't
         c.save();
-        c.clearRect(0,0,width,height);
+        c.clearRect(0,0,trueWidth,height);
         if(viewMode == 1){
             c.translate(center[0],center[1]);
             if(visibleObjects.length < 15){
@@ -261,7 +274,7 @@ var Map = (function(win,doc,undefined){
                     c.translate((d.x+d.center.x)*scale,(d.y+d.center.y)*scale);
                     c.strokeStyle = colorUI;
                     c.fillStyle = '#fff';
-                    c.font = '16px sans-serif';
+                    c.font = fontSize + ' ' + fontFamily;
                     c.textBaseline = 'bottom';
                     var p = [(10*i+10)*Math.cos(d.polarPoints[0][1]+d.yaw),(5*i+10)*Math.sin(d.polarPoints[0][1]+d.yaw)],
                         l = c.measureText(d.name).width;
@@ -308,6 +321,7 @@ var Map = (function(win,doc,undefined){
         if(highlightedObject != -1){
             bodies.forEach(function(d){ d.isFocus = false; })
             bodies[highlightedObject].isFocus = true;
+            focusedObject = highlightedObject;
         }
     }
     function handleZoom(){
@@ -325,9 +339,10 @@ var Map = (function(win,doc,undefined){
     }
     function handleResize(){
         var min = Math.min(win.innerWidth,win.innerHeight);
+        trueWidth = win.innerWidth;
         width = min*aspectRatio;
         height = min;
-        canvas.property('width',width);
+        canvas.property('width',trueWidth);
         canvas.property('height',height);
         //TODO: change the scaling stuff
     }
@@ -402,6 +417,7 @@ var Map = (function(win,doc,undefined){
         this.yaw = 0;                   //really longitude of ascending node
         this.inclination = 0;           //maybe future use, but just make orbit backwards if negative
         this.period = 0;                //calculated
+        this.orbitalVelocity = 0;
         this.center = {};               //should be an object
         this.satellites = [];
         //physical parameters
@@ -410,6 +426,9 @@ var Map = (function(win,doc,undefined){
         this.mass = 0;
         this.grav = 0;
         this.albedo = 1;
+        this.surfaceGravity = 0;
+        this.temperature = 0;
+        this.luminosity = 0;
         this.points = [];
         this.polarPoints = [];
         this.x = 0;                     //these are centroid for regions, otherwise same as points[0]
@@ -451,6 +470,8 @@ var Map = (function(win,doc,undefined){
         this.eccAnomaly = trueToEcc(this.eccentricity,this.trueAnomaly);
         this.grav = this.mass * 6.67408e-11;
         this.center = bodiesByName[this.primary]||{x:0,y:0};
+        this.period = Math.sqrt((4*pi*pi*this.majorAxis*this.majorAxis*this.majorAxis)/(6.67e-11*(this.center.mass+this.mass)));
+        this.orbitalVelocity = Math.sqrt(this.center.grav/(this.majorAxis*(1+((this.eccentricity*this.eccentricity)/2))));
         //position calculations
         //TODO: Check for single points that aren't wrapped in arrays
         if(this.points.length == 0){
@@ -481,6 +502,17 @@ var Map = (function(win,doc,undefined){
             });
             this.x /= this.points.length;
             this.y /= this.points.length;
+        }
+        //physical parameter calculations
+        this.surfaceGravity = this.grav/(this.radius*this.radius);
+        if(!this.temperature && this.type == 2){
+            var c = this.center,
+                d = this.polarPoints[0][0];
+            while(!c.luminosity){
+                d = c.polarPoints[0][0];
+                c = c.center;
+            }
+            this.temperature = Math.round((Math.pow((c.luminosity * (1-this.albedo))/(4*boltzmann*pi*d*d),0.25)-237.15)*10)/10;
         }
         //rendering calculations
         if(!this.orbitMinZoom) this.orbitMinZoom = Math.floor(Math.log((10/this.majorAxis)/pixelsPerMeter)/Math.log(2));
@@ -535,7 +567,7 @@ var Map = (function(win,doc,undefined){
             });
             this.orbitVisible = this.drawOrbit && coordinates[0] > this.orbitMinZoom;
             this.orbitTarget = this.orbitVisible?2*pi:0;
-            this.pointVisible = this.drawPoint && coordinates[0] > this.pointMinZoom;
+            this.pointVisible = (this.drawPoint && coordinates[0] > this.pointMinZoom) || this.isFocus;
             this.pointSize = Math.max(this.radius*scale,this.satellites.length?2:5);
             if(this.inView && this.pointVisible) visibleObjects.push(this);
         }
@@ -619,6 +651,89 @@ var Map = (function(win,doc,undefined){
         c.restore();
     }
     Body.prototype.draw = drawBody;
+    function infoBody(elem,quick){
+        var that = this;
+        elem.append('h1')
+            .text(this.name);
+        var e = elem.append('div');
+        e.append('span')
+            .classed('type',true)
+            .text(function(){
+                if(that.type == 1){ return 'Star'; }
+                else if(that.type == 2){
+                    return that.primary == 'Sol'?
+                        'Planet':
+                        'Moon of ' + that.primary;
+                }
+            });
+        if(this.satellites.length){
+            e.append('div')
+                .classed('sat-count',true)
+                .html('<span>Satellites:</span> ' + this.satellites.length);
+        }
+        if(!quick){
+            elem.append('h2').text('Orbital Characteristics');
+            elem.append('p')
+                .html('<span>Semi-major axis:</span> '+ (this.majorAxis/1000).toFixed(1) + ' km');
+            elem.append('p')
+                .html('<span>Eccentricty:</span> '+ this.eccentricity.toFixed(3));
+            //TODO: convert to closest timescale
+            elem.append('p')
+                .html('<span>Orbital period:</span> '+ (this.period/86400).toFixed(1) + ' Earth days');
+            elem.append('h2').text('Physical Characteristics');
+            elem.append('p')
+                .html('<span>Mean radius:</span> '+ (this.radius/1000).toFixed(1) + ' km');
+            elem.append('p')
+                .html('<span>Mass:</span> '+ this.mass.toExponential(4) + ' kg');
+            elem.append('p')
+                .html('<span>Surface gravity:</span> '+ this.surfaceGravity.toFixed(1) + ' m/s<sup>2</sup> ' +
+                '(' + (this.surfaceGravity/9.81).toFixed(2) + 'g)');
+            elem.append('p')
+                .html('<span>Albedo:</span> '+ this.albedo);
+            elem.append('p')
+                .html('<span>Surface Temperature:</span> '+ this.temperature + ' °C');
+            if(this.infoText){
+                elem.append('h2').text('Other Information');
+                elem.append('p').html(this.infoText);
+            }
+        }else{
+            elem.append('h2').text('Distance from ' + bodies[focusedObject].name);
+            var t1 = this.x + this.center.x,
+                t2 = bodies[focusedObject].x + bodies[focusedObject].center.x,
+                d = Math.sqrt(t1*t1 + t2*t2);
+            elem.append('p')
+                .html('<span>Distance:</span> ' + (d/1000).toFixed(1) + ' km');
+            elem.append('p')
+                .html('<span>Light lag:</span> ' + (d/2.998e+8).toFixed(1) + ' seconds');
+            d = 0;
+            var tree = {};
+            t1 = this;
+            while(t1.center.name){
+                if(!tree[t1.center.name]) tree[t1.center.name] = {};
+                if(tree[t1.center.name][t1.name]){ tree[t1.center.name][t1.name] = undefined; }
+                else{ tree[t1.center.name][t1.name] = t1.orbitalVelocity; }
+                t1 = t1.center;
+            }
+            t1 = bodies[focusedObject];
+            while(t1.center.name){
+                if(!tree[t1.center.name]) tree[t1.center.name] = {};
+                if(tree[t1.center.name][t1.name]){ tree[t1.center.name][t1.name] = undefined; }
+                else{ tree[t1.center.name][t1.name] = t1.orbitalVelocity; }
+                t1 = t1.center;
+            }
+            for(var i in tree){
+                t2 = Object.keys(tree[i]);
+                if(t2.length == 1){
+                    d += tree[i][t2[0]];
+                }else{
+                    d += Math.abs(tree[i][t2[0]] - tree[i][t2[1]]);
+                }
+            }
+            elem.append('p')
+                .html('<span>Delta-v:</span> ' + (d/1000).toFixed(1) + ' km/s (don\'t trust me)');
+        }
+    }
+    Body.prototype.infobox = infoBody;
 
     //#PUBLIC DATA
     var out = {};

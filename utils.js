@@ -51,3 +51,4 @@ function trueToEcc(ecc,anom){
 }
 var AU = 149598023000;
 var pi = Math.PI;
+var boltzmann = 5.67036e-8;

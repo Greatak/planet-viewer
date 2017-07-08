@@ -1,6 +1,39 @@
 body {
-    background: #182033;
+    background:url('background.jpg') 0 0 / cover no-repeat, #182033;
     color: #fff;
+    font-family: "Open Sans", sans-serif;
+    font-size: 16px;
     margin: 0;
     overflow: hidden;
+}
+h1 {
+    border-bottom: solid 1px #fff;
+    font-weight: 300;
+    font-size: 2em;
+    margin: 0;
+}
+h2 {
+    font-size: 1.6em;
+    font-weight: 300;
+    margin: 0;
+}
+p {
+    margin: 0.5em 0.25em;
+}
+span {
+    font-weight: 600;
+}
+h1 + div {
+    margin: 0 0.25em;
+}
+
+#info-container {
+    background: rgba(30,30,30,0.4);
+    position: absolute;
+    right: 0;
+    top: 0;
+    width: 30vw;
+}
+.sat-count {
+    float: right;
 }
