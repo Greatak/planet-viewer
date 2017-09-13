@@ -13,7 +13,7 @@ var Map = (function(win,doc,undefined){
 
     //#STYLE
     var colorPoint = '#FCB52C',
-        colorUI = '#7662BE',
+        colorUI = '#5FC2C2',
         fontFamily = 'Open Sans',
         fontSize = '16px';
 
@@ -176,8 +176,22 @@ var Map = (function(win,doc,undefined){
                     center[1] = (coordinates[2]*scale);
                 }else if(coordinates.length == 5){
                     scale = Math.pow(2,coordinates[0])*256;
-                    center = projMercator([coordinates[3],coordinates[4]]);
+                    var tx = 0, ty = 0;
+                    for(var i = bodies.length;i--;){
+                        tx = Math.abs(coordinates[1]-(((-(bodies[i].x+bodies[i].center.x)*scale)+width/2)/scale))/(((-(bodies[i].x+bodies[i].center.x)*scale)+width/2)/scale);
+                        ty = Math.abs(coordinates[2]-(((-(bodies[i].y+bodies[i].center.y)*scale)+height/2)/scale))/(((-(bodies[i].y+bodies[i].center.y)*scale)+height/2)/scale);
+                        if(i == 3) console.log(bodies[i].name,tx,ty);
+                        if(tx < 0.1 && ty < 0.1){
+                            viewTransition[2] = i;
+                            loadSurface(bodies[i]);
+                            console.log(bodies[i].name);
+                            break;
+                        }
+                    }
                     changeViewMode(2);
+                    projMercator.scale(scale/2/pi);
+                    center = projMercator([coordinates[3],coordinates[4]]);
+                    projMercator.translate([center[0],center[1]]);
                 }
             }
         }
@@ -270,13 +284,14 @@ var Map = (function(win,doc,undefined){
             c.translate(center[0],center[1]);
             if(visibleObjects.length < 15){
                 visibleObjects.forEach(function(d,i){
+                    if(!d.drawLabel) return;
                     c.save();
                     c.translate((d.x+d.center.x)*scale,(d.y+d.center.y)*scale);
                     c.strokeStyle = colorUI;
                     c.fillStyle = '#fff';
                     c.font = fontSize + ' ' + fontFamily;
                     c.textBaseline = 'bottom';
-                    var p = [(10*i+10)*Math.cos(d.polarPoints[0][1]+d.yaw),(5*i+10)*Math.sin(d.polarPoints[0][1]+d.yaw)],
+                    var p = [(10*i+20+d.pointSize)*Math.cos(d.polarPoints[0][1]+d.yaw),(5*i+20+d.pointSize)*Math.sin(d.polarPoints[0][1]+d.yaw)],
                         l = c.measureText(d.name).width;
                     c.beginPath();
                     c.moveTo(0,0);
@@ -363,6 +378,9 @@ var Map = (function(win,doc,undefined){
         if(viewMode == 2){
             viewTransition[0] = 0.9*scale;
             viewTransition[1] = 180;
+            console.log(viewTransition[2]);
+            coordinates[1] = ((-(bodies[viewTransition[2]].x+bodies[viewTransition[2]].center.x)*viewTransition[0])+width/2)/viewTransition[0];
+            coordinates[2] = ((-(bodies[viewTransition[2]].y+bodies[viewTransition[2]].center.y)*viewTransition[0])+height/2)/viewTransition[0];
             center = [width/2,height/2];
             scale = 180;
             projMercator.scale(scale/2/pi);
@@ -442,10 +460,17 @@ var Map = (function(win,doc,undefined){
         this.orbitMinZoom = 0;
         this.orbitTarget = 0;
         this.orbitAngle = 0;
+        this.orbitOpacity = 1;
+        this.orbitColor = '#fff';
+        this.orbitThickness = 0;
+        this.orbitOffset = [0,0];
         this.pointVisible = true;
         this.pointMinZoom = 0;
         this.pointMaxZoom = 0;
         this.pointSize = 5;
+        this.drawOpacity = 1;
+        this.drawColor = colorPoint;
+        this.drawLabel = true;
         this.highlight = false;
         this.highTarget = 0;
         this.highSize = 0;
@@ -456,12 +481,16 @@ var Map = (function(win,doc,undefined){
 
 
         for(var i in obj){ this[i] = obj[i]; }
+        if(this.orbitThickness){
+            this.majorAxis += this.orbitThickness/2;
+            this.yaw = Math.random()*360;
+        }
         //unit conversions
         if(obj.dist) this.majorAxis *= this.dist;
         this.meanAnomaly *= pi/180;
         this.inclination *= pi/180;
         this.yaw *= pi/180;
-        this.mass *= this.type==1?1.98855e30:5.97237e24;
+        this.mass *= this.type==1?1.98855e30:this.primary=='Sol'?5.97237e24:1;
         //orbital parameter calculation
         this.minorAxis = Math.sqrt(1-(this.eccentricity*this.eccentricity))*this.majorAxis;
         this.latus = (this.minorAxis*this.minorAxis)/this.majorAxis;
@@ -520,7 +549,7 @@ var Map = (function(win,doc,undefined){
         if(!this.pointMaxZoom) this.pointMaxZoom = (height/4)/(this.radius||1);
         if(!this.drawColor) this.drawColor = albedoColor(this.albedo||1);
         //clerical
-        if(this.primary){
+        if(this.primary && this.drawLabel){
             bodiesByName[this.primary].satellites.push(this);
         }
 
@@ -537,26 +566,36 @@ var Map = (function(win,doc,undefined){
         if(this.highSize < 0) this.highSize = 0;
         //draw the orbit around
         t = this.orbitTarget - this.orbitAngle;
-        if(t > 0.001){
-            this.orbitAngle += t*dt;
+        if(t > 0.005){
+            if(this.drawLabel){
+                this.orbitAngle += t*dt;
+            }else{
+                this.orbitAngle += 5*dt;
+            }
         }else{
             this.orbitAngle = this.orbitTarget;
         }
         if(this.orbitAngle < 0) this.orbitAngle = 0;
 
         //mouseover testing
-        var tx = this.viewPoints[0][0] - mousePosition[0], ty = this.viewPoints[0][1] - mousePosition[1];
-        this.highlight = (tx > -10 && tx < 10 && ty > -10 && ty < 10);
-        if(this.highlight){ highlightedObject = this.id; }
-        this.highTarget = this.highlight||this.isFocus?this.pointSize+10:0;
+        if(this.drawLabel){
+            var tx = this.viewPoints[0][0] - mousePosition[0], ty = this.viewPoints[0][1] - mousePosition[1];
+            this.highlight = (tx > -10 && tx < 10 && ty > -10 && ty < 10);
+            if(this.highlight){ highlightedObject = this.id; }
+            this.highTarget = this.highlight||this.isFocus?this.pointSize+10:0;
+        }
     }
     Body.prototype.tick = tickBody;
     function updateBody(){
         if(viewMode == 1){
+            //reset, this is called after bodies loops
             this.onlyVisible = false;
+            //does it fit in the screen?
             this.inView = (this.x+this.center.x)*scale+center[0] > 0 && (this.x+this.center.x)*scale+center[0] < width
                 && (this.y+this.center.y)*scale+center[1] > 0 && (this.y+this.center.y)*scale+center[1] < height;
+            //forEach breaks this
             var that = this;
+            //iterate to check multi-point objects
             this.points.forEach(function(d,i){
                 that.viewPoints[i][0] = (d[0]+that.center.x)*scale + center[0];
                 that.viewPoints[i][1] = (d[1]+that.center.y)*scale + center[1];
@@ -565,45 +604,60 @@ var Map = (function(win,doc,undefined){
                     that.inView = true;
                 }
             });
+            //checking zoom levels for orbit trace
             this.orbitVisible = this.drawOrbit && coordinates[0] > this.orbitMinZoom;
+            //if we can see it, it does an animation
             this.orbitTarget = this.orbitVisible?2*pi:0;
+            //more zoom checking
             this.pointVisible = (this.drawPoint && coordinates[0] > this.pointMinZoom) || this.isFocus;
+            //do real-size when close
             this.pointSize = Math.max(this.radius*scale,this.satellites.length?2:5);
+            //we want to keep track of all the visible things in frame
             if(this.inView && this.pointVisible) visibleObjects.push(this);
         }
     }
     Body.prototype.update = updateBody;
     function drawBody(c){
+        //don't bother if we're in planet mode
         if(viewMode != 1) return;
-        c.save();
+        c.save();//draw
         c.translate(this.center.x*scale,this.center.y*scale);
         if(this.type == 1){
-            c.save();
+            //star has custom symbol
+            //TODO: Genericize this so you can make anything have custom symbols
+            c.save();//star
             c.fillStyle = this.drawColor;
+            c.globalAlpha = this.drawOpacity;
             c.beginPath();
             c.moveTo(2,2); c.lineTo(0,12); c.lineTo(-2,2);
             c.lineTo(12,0); c.lineTo(-2,-2); c.lineTo(0,-12);
             c.lineTo(2,-2); c.lineTo(-12,0); c.closePath();
             c.fill();
-            c.restore();
+            c.restore();//star
         }
         if(this.type == 2){
-            c.save();
+            c.save();//object start
             if(this.orbitVisible){
-                c.save();
+                //orbit trace
+                //TODO: allow data to specify line width
+                c.save();//orbit
                 c.rotate(this.yaw);
                 c.translate(-this.linearEccentricity*scale,0)
-                c.strokeStyle = '#fff';
-                c.lineWidth = 0.25;
+                c.strokeStyle = this.orbitColor;
+                c.globalAlpha = this.orbitOpacity;
+                c.lineWidth = this.orbitThickness*scale||0.25;
                 c.beginPath();
-                c.ellipse(0,0,this.majorAxis*scale,this.minorAxis*scale,0,
+                c.ellipse(this.orbitOffset[0]*scale,this.orbitOffset[1]*scale,this.majorAxis*scale,this.minorAxis*scale,0,
                     this.eccAnomaly,this.orbitAngle+this.eccAnomaly,false);
                 c.stroke();
-                c.restore();
+                c.restore();//orbit
             }
             if(this.pointVisible){
-                c.save();
+                //object position
+                //TODO: custom symbols
+                c.save();//point
                 if(this.points.length == 1){
+                    //for single point objects
                     c.translate(this.x*scale,this.y*scale);
                     if(this.onlyVisible && this.pointSize > 20){
                         c.strokeStyle = '#fff';
@@ -617,40 +671,44 @@ var Map = (function(win,doc,undefined){
                         }
                         c.stroke();
                     }else{
-                        c.save();
+                        c.save();//highlight ring
                         c.beginPath();
                         c.arc(0,0,this.highSize,0,2*pi,false);
                         c.strokeStyle = colorUI;
                         c.setLineDash([5,2]);
                         c.stroke();
-                        c.restore();
+                        c.restore();//highlight ring
                         c.beginPath();
                         c.arc(0,0,this.pointSize,0,2*pi,false);
-                        c.fillStyle = colorPoint;
+                        c.fillStyle = this.drawColor;
+                        c.globalAlpha = this.drawOpacity;
                         c.fill();
                         c.beginPath();
                         c.arc(0,0,5,0,2*pi,false);
-                        c.strokeStyle = colorPoint;
+                        c.strokeStyle = this.drawColor;
                         c.stroke();
                     }
                 }else{
+                    //shapes
+                    //TODO: These don't render, probably a translation error
                     c.beginPath();
                     c.moveTo(this.points[0][0]*scale,this.points[0][1]*scale);
                     this.points.forEach(function(d){
                         c.lineTo(d[0]*scale,d[1]*scale);
                     });
                     c.closePath();
-                    c.fillStyle = '#f0f';
-                    c.globalAlpha = 0.2;
+                    c.fillStyle = this.drawColor;
+                    c.globalAlpha = this.drawOpacity;
                     c.fill();
                 }
-                c.restore();
+                c.restore();//point
             }
-            c.restore();
+            c.restore();//object
         }
-        c.restore();
+        c.restore();//draw
     }
     Body.prototype.draw = drawBody;
+    //TODO: find some way to expose this to customization at startup
     function infoBody(elem,quick){
         var that = this;
         elem.append('h1')
@@ -697,6 +755,10 @@ var Map = (function(win,doc,undefined){
                 elem.append('p').html(this.infoText);
             }
         }else{
+            //TODO: This is just all a mess
+            //TODO: Delta-V is entirely wrong, probably needs to do rough hohmanns
+            //TODO: distance and lag should be given as ranges, probably just apo +- peri
+                //could also do getR and use the yaw value we're projecting from
             elem.append('h2').text('Distance from ' + bodies[focusedObject].name);
             var t1 = this.x + this.center.x,
                 t2 = bodies[focusedObject].x + bodies[focusedObject].center.x,
