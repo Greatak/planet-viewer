@@ -463,7 +463,7 @@ var Map = (function(win,doc,undefined){
         this.orbitOpacity = 1;
         this.orbitColor = '#fff';
         this.orbitThickness = 0;
-        this.orbitOffset = [0,0];
+        this.orbitDash = [];
         this.pointVisible = true;
         this.pointMinZoom = 0;
         this.pointMaxZoom = 0;
@@ -517,8 +517,8 @@ var Map = (function(win,doc,undefined){
         }else if(this.points.length == 1){
             //stars and such have specific locations and no polar coordinates
             this.viewPoints.push([0,0]);
-            this.x = this.points[0][0];
-            this.y = this.points[0][1];
+            this.x = this.points[0][0] * (obj.dist||1);
+            this.y = this.points[0][1] * (obj.dist||1);
         }else{
             var that = this;
             this.points.forEach(function(d,i){
@@ -628,6 +628,7 @@ var Map = (function(win,doc,undefined){
             c.save();//star
             c.fillStyle = this.drawColor;
             c.globalAlpha = this.drawOpacity;
+            c.translate(this.x*scale,this.y*scale);
             c.beginPath();
             c.moveTo(2,2); c.lineTo(0,12); c.lineTo(-2,2);
             c.lineTo(12,0); c.lineTo(-2,-2); c.lineTo(0,-12);
@@ -646,8 +647,10 @@ var Map = (function(win,doc,undefined){
                 c.strokeStyle = this.orbitColor;
                 c.globalAlpha = this.orbitOpacity;
                 c.lineWidth = this.orbitThickness*scale||0.25;
+                //TODO: Canvas doesn't like large strokes with lineDashArrays
+                //c.setLineDash(this.orbitDash);
                 c.beginPath();
-                c.ellipse(this.orbitOffset[0]*scale,this.orbitOffset[1]*scale,this.majorAxis*scale,this.minorAxis*scale,0,
+                c.ellipse(0,0,this.majorAxis*scale,this.minorAxis*scale,0,
                     this.eccAnomaly,this.orbitAngle+this.eccAnomaly,false);
                 c.stroke();
                 c.restore();//orbit
